@@ -1,7 +1,6 @@
 mod build;
 mod conf;
 mod doctor;
-mod expand;
 mod ir_report;
 mod program;
 mod report;

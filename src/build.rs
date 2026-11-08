@@ -1,5 +1,5 @@
+use std::collections::BTreeMap;
 use crate::conf::{BuildConf, BuildList};
-use crate::expand::{Vars, expand};
 use crate::ir_report::IrReport;
 use crate::program::Program;
 use crate::toolchain::Toolchain;
@@ -11,6 +11,14 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub type Vars = BTreeMap<&'static str, String>;
+
+/// Contiene i percorsi usati durante il processo di build di un programma
+/// * `build` è il posto in cui viene salvato il programma compilato,
+/// * `prefix` è il percorso in cui viene salvata una configurazione,
+/// * `report` è il percorso del file in cui il compilatore salva le metriche raccolte dai pass
+///    del compilatore,
+/// * `source` è il percorso in cui viene salvato il codice sorgente del programma.
 pub struct Dirs {
     pub build: PathBuf,
     pub prefix: PathBuf,
@@ -92,6 +100,64 @@ pub fn run(
     Ok(())
 }
 
+/// Estrapola i comandi da eseguire durante il processo di build e ci inserisce i parametri
+/// di input.
+fn commands(prog: &Program, vars: &Vars, dirs: &Dirs) -> Result<Vec<Command>> {
+    let mut env = Vec::new();
+    for (k, v) in &prog.build.env {
+        let v = expand(v, vars).with_context(|| format!("{}: build.env.{k}", prog.name))?;
+        env.push((k.clone(), v));
+    }
+    let mut commands = Vec::new();
+    for (i, step) in prog.build.steps.iter().enumerate() {
+        let ctx = || format!("{}: build.steps[{i}]", prog.name);
+        let (program, args) = step
+            .split_first()
+            .with_context(|| format!("{}: empty command", ctx()))?;
+        let mut cmd = Command::new(expand(program, vars).with_context(ctx)?);
+        for a in args {
+            cmd.arg(expand(a, vars).with_context(ctx)?);
+        }
+        cmd.current_dir(&dirs.build)
+            .envs(env.iter().map(|(k, v)| (k, v)));
+        commands.push(cmd);
+    }
+    Ok(commands)
+}
+
+fn expand(template: &str, vars: &Vars) -> Result<String> {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(i) = rest.find(['{', '}']) {
+        out.push_str(&rest[..i]);
+        let (c, after) = (rest.as_bytes()[i], &rest[i + 1..]);
+        if after.starts_with(c as char) {
+            // graffa raddoppiata: carattere letterale
+            out.push(c as char);
+            rest = &after[1..];
+        } else if c == b'}' {
+            bail!("unmatched '}}' in \"{template}\"");
+        } else {
+            let Some(end) = after.find('}') else {
+                bail!("unclosed '{{' in \"{template}\"");
+            };
+            let name = &after[..end];
+            match vars.get(name) {
+                Some(v) => out.push_str(v),
+                None => bail!(
+                    "unknown placeholder {{{name}}} in \"{template}\" (known: {})",
+                    vars.keys().copied().collect::<Vec<_>>().join(", ")
+                ),
+            }
+            rest = &after[end + 1..];
+        }
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Clona la directory da remoto, ne seleziona la versione specificata nel file toml e se c'è
+/// bisogno (`copy_source == true`) la copia nella directory di build.
 fn prepare(prog: &Program, dirs: &Dirs) -> Vec<Command> {
     let mut v = Vec::new();
     if !dirs.source.join(".git").is_dir() {
@@ -218,27 +284,4 @@ pub fn vars(tc: &Toolchain, conf: BuildConf, dirs: &Dirs, jobs: usize) -> Vars {
         ("prefix", dirs.prefix.display().to_string()),
         ("report", dirs.report.display().to_string()),
     ])
-}
-
-pub fn commands(prog: &Program, vars: &Vars, dirs: &Dirs) -> Result<Vec<Command>> {
-    let mut env = Vec::new();
-    for (k, v) in &prog.build.env {
-        let v = expand(v, vars).with_context(|| format!("{}: build.env.{k}", prog.name))?;
-        env.push((k.clone(), v));
-    }
-    let mut cmds = Vec::new();
-    for (i, step) in prog.build.steps.iter().enumerate() {
-        let ctx = || format!("{}: build.steps[{i}]", prog.name);
-        let (program, args) = step
-            .split_first()
-            .with_context(|| format!("{}: empty command", ctx()))?;
-        let mut cmd = Command::new(expand(program, vars).with_context(ctx)?);
-        for a in args {
-            cmd.arg(expand(a, vars).with_context(ctx)?);
-        }
-        cmd.current_dir(&dirs.build)
-            .envs(env.iter().map(|(k, v)| (k, v)));
-        cmds.push(cmd);
-    }
-    Ok(cmds)
 }
