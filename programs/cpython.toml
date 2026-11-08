@@ -1,0 +1,19 @@
+# configure senza i flag della configurazione, opzioni di default (-O3, niente
+# PGO/LTO/JIT; ensurepip attivo per i venv di pyperformance).
+#   CFLAGS_NODIST  compilazione dell'interprete e dei moduli C
+#   LIBC           finisce solo nel link degli eseguibili (python,
+#                  _bootstrap_python, _freeze_module, _testembed), non in quello
+#                  dei moduli .so; su Linux configure lo lascia vuoto
+# Moduli facoltativi: openssl-devel libffi-devel zlib-devel bzip2-devel xz-devel sqlite-devel
+[source]
+git = "https://github.com/python/cpython"
+ref = "v3.14.10"
+
+[build]
+copy_source = true
+steps = [
+    ["./configure", "CC={cc}", "--prefix={prefix}"],
+    ["make", "-j{jobs}", "CFLAGS_NODIST={copt}", "LIBC={ldopt}"],
+    ["make", "install", "CFLAGS_NODIST={copt}", "LIBC={ldopt}"],
+]
+verify = ["{prefix}/bin/python3"]

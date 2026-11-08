@@ -1,0 +1,22 @@
+# C++: libstdc++ è di sistema, non strumentata. Servono ninja-build e python3.
+#   duckdb, test/unittest, benchmark/benchmark_runner
+# LINK_CORE_EXTENSIONS: senza, tpch e json vengono compilate ma non collegate
+# staticamente agli eseguibili.
+# Ogni clang può superare i 2-3 GB: limitare i job con -j (es. 5 con 16 GB).
+[source]
+git = "https://github.com/duckdb/duckdb"
+ref = "v2.0.0"
+
+[build]
+copy_source = true
+steps = [
+    ["cmake", "-S", "{build}", "-B", "{build}/build", "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER={cc}", "-DCMAKE_CXX_COMPILER={cxx}",
+        "-DCMAKE_C_FLAGS={copt}", "-DCMAKE_CXX_FLAGS={copt}", "-DCMAKE_EXE_LINKER_FLAGS={ldopt}",
+        "-DBUILD_EXTENSIONS=tpch;json", "-DLINK_CORE_EXTENSIONS=ON",
+        "-DBUILD_BENCHMARKS=1", "-DBUILD_UNITTESTS=1", "-DENABLE_SANITIZER=0", "-DENABLE_UBSAN=0"],
+    ["rm", "-f", "{report}"],
+    ["cmake", "--build", "{build}/build", "-j{jobs}", "--target", "duckdb", "unittest", "benchmark_runner"],
+]
+install = { "build/duckdb" = "duckdb" }
+verify = ["build/duckdb", "build/test/unittest", "build/benchmark/benchmark_runner"]

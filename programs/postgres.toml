@@ -1,0 +1,17 @@
+# Build fuori dai sorgenti. Dal repository servono bison e flex.
+# configure senza i flag della configurazione (esegue programmi di prova);
+# COPT e LDFLAGS_EX sono le variabili di Postgres per aggiungere flag.
+# make install esegue programmi appena compilati (zic): stessi flag.
+[source]
+git = "https://github.com/postgres/postgres"
+ref = "REL_18_6"
+
+[build]
+copy_source = false
+steps = [
+    ["{src}/configure", "--prefix={prefix}", "--without-icu", "--without-readline",
+        "--without-zlib", "CC={cc}", "CFLAGS=-O2"],
+    ["make", "-s", "-j{jobs}", "COPT={copt}", "LDFLAGS_EX={ldopt}"],
+    ["make", "-s", "install", "COPT={copt}", "LDFLAGS_EX={ldopt}"],
+]
+verify = [{ path = "{prefix}/bin/postgres", min_refs = 1000 }]

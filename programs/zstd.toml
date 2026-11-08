@@ -1,0 +1,16 @@
+# CLI (programs/zstd) e test della libreria (tests/fuzzer, zstreamtest, datagen).
+# MOREFLAGS e LDFLAGS: libzstd.mk li aggiunge con +=, le opzioni del progetto restano.
+# ZSTD_NO_ASM=1 esclude huf_decompress_amd64.S, che non sarebbe strumentato.
+[source]
+git = "https://github.com/facebook/zstd"
+ref = "v1.5.7"
+
+[build]
+copy_source = true
+steps = [
+    ["make", "-C", "programs", "-j{jobs}", "CC={cc}", "zstd"],
+    ["make", "-C", "tests", "-j{jobs}", "CC={cc}", "fuzzer", "zstreamtest", "datagen"],
+]
+env = { MOREFLAGS = "{copt}", LDFLAGS = "{ldopt}", ZSTD_NO_ASM = "1" }
+install = { "programs/zstd" = "zstd" }
+verify = ["programs/zstd", "tests/fuzzer", "tests/zstreamtest"]

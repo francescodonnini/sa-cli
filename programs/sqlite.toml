@@ -1,0 +1,20 @@
+# Build fuori dai sorgenti. Servono tcl-devel e tclsh (libtcl non strumentata).
+#   testfixture  esegue la suite di test in Tcl
+#   speedtest1   benchmark ufficiale (--enable-rtree per il testset rtree)
+#   kvtest       lettura e scrittura di BLOB
+#   wordcount    conteggio delle parole, 7 modalità SQL
+# I generatori della build (lemon, mkkeywordhash, jimsh) usano B.cc e non
+# ricevono questi flag.
+[source]
+git = "https://github.com/sqlite/sqlite"
+ref = "version-3.50.4"
+
+[build]
+copy_source = false
+steps = [
+    ["{src}/configure", "CC={cc}", "CFLAGS=-O2", "--enable-rtree"],
+    ["make", "-j{jobs}", "CFLAGS=-O2 {copt}", "LDFLAGS.configure={ldopt}",
+        "testfixture", "speedtest1", "kvtest", "wordcount"],
+]
+install = { "speedtest1" = "speedtest1", "kvtest" = "kvtest", "wordcount" = "wordcount" }
+verify = ["speedtest1", "kvtest", "wordcount", "testfixture"]

@@ -1,0 +1,20 @@
+# Servono autoconf, automake e libevent-devel (di sistema, non strumentata).
+# configure senza i flag della configurazione; a make si passano CPPFLAGS e
+# LDFLAGS, che automake mette accanto a CFLAGS (che resta quello di configure)
+# e che configure lascia vuoti con la libevent di sistema.
+# --disable-coverage: altrimenti memcached-debug viene linkato con gcov.
+# memcached-debug, testapp, sizes e timedrun servono a make test.
+[source]
+git = "https://github.com/memcached/memcached"
+ref = "1.6.45"
+
+[build]
+copy_source = true
+steps = [
+    ["./autogen.sh"],
+    ["./configure", "CC={cc}", "--disable-coverage"],
+    ["make", "-j{jobs}", "CPPFLAGS={copt}", "LDFLAGS={ldopt}",
+        "memcached", "memcached-debug", "testapp", "sizes", "timedrun"],
+]
+install = { "memcached" = "memcached" }
+verify = ["memcached", "memcached-debug"]

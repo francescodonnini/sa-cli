@@ -1,0 +1,18 @@
+# no-asm: niente assembly (non passerebbe dal pass), resta il codice C.
+# no-shared, no-module: libcrypto, libssl e provider dentro gli eseguibili.
+# Configure senza i flag della configurazione. Nel Makefile i flag della
+# piattaforma sono in CNF_CFLAGS/CNF_LDFLAGS; CFLAGS e LDFLAGS sono la parte
+# dell'utente, di default "-Wall -O3" e vuoto: qui si riscrivono aggiungendo i
+# flag della configurazione. make test dovrà ricevere gli stessi valori.
+[source]
+git = "https://github.com/openssl/openssl"
+ref = "openssl-3.5.9"
+
+[build]
+copy_source = true
+steps = [
+    ["./Configure", "linux-x86_64", "no-asm", "no-shared", "no-module", "CC={cc}"],
+    ["make", "-j{jobs}", "CFLAGS=-Wall -O3 {copt}", "LDFLAGS={ldopt}"],
+]
+install = { "apps/openssl" = "openssl" }
+verify = ["apps/openssl"]

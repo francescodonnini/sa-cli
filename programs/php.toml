@@ -1,0 +1,20 @@
+# Servono autoconf, bison e re2c. --disable-all: motore Zend ed estensioni
+# sempre presenti, niente librerie di sistema. --disable-opcache-jit: il JIT
+# genererebbe codice non strumentato.
+# configure senza i flag della configurazione; a make EXTRA_CFLAGS
+# (compilazione) e LDFLAGS (nel link di sapi/cli/php, dopo
+# EXTRA_LDFLAGS_PROGRAM che resta quello di configure; configure lo lascia vuoto).
+[source]
+git = "https://github.com/php/php-src"
+ref = "php-8.5.12"
+
+[build]
+copy_source = true
+steps = [
+    ["./buildconf", "--force"],
+    ["./configure", "CC={cc}", "CFLAGS=-O2", "--disable-all", "--enable-cli", "--disable-cgi",
+        "--disable-phpdbg", "--disable-opcache-jit", "--without-pear"],
+    ["make", "-j{jobs}", "EXTRA_CFLAGS={copt}", "LDFLAGS={ldopt}"],
+]
+install = { "sapi/cli/php" = "php" }
+verify = ["sapi/cli/php"]

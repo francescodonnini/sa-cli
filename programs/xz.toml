@@ -1,0 +1,19 @@
+# liblzma (statica, quindi dentro xz) e strumenti, con CMake: dal repository
+# autotools richiederebbe autogen.sh. ctest usa gli stessi flag.
+# I test di configurazione di CMake compilano con il pass: il report si
+# azzera dopo la configurazione.
+[source]
+git = "https://github.com/tukaani-project/xz"
+ref = "v5.8.4"
+
+[build]
+copy_source = true
+steps = [
+    ["cmake", "-S", "{build}", "-B", "{build}/build", "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_C_COMPILER={cc}", "-DCMAKE_C_FLAGS={copt}", "-DCMAKE_EXE_LINKER_FLAGS={ldopt}",
+        "-DBUILD_TESTING=ON", "-DXZ_NLS=OFF", "-DXZ_DOC=OFF"],
+    ["rm", "-f", "{report}"],
+    ["cmake", "--build", "{build}/build", "-j{jobs}"],
+]
+install = { "build/xz" = "xz" }
+verify = ["build/xz"]
