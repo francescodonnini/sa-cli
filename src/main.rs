@@ -40,8 +40,8 @@ impl Cli {
     fn mode(&self) -> RunMode {
         match (self.dry_run, self.verbose) {
             (true, _) => RunMode::DryRun,
-            (false, true) => RunMode::Quiet,
-            (false, false) => RunMode::Verbose,
+            (false, false) => RunMode::Quiet,
+            (false, true) => RunMode::Verbose,
         }
     }
 }

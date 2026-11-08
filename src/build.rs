@@ -12,21 +12,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub struct Dirs {
-    pub src: PathBuf,
     pub build: PathBuf,
     pub prefix: PathBuf,
     pub report: PathBuf,
+    pub source: PathBuf,
 }
 
 impl Dirs {
     pub fn new(targets_root: &Path, program: &str, conf: BuildConf) -> Dirs {
         let base = targets_root.join(program);
-        let build = base.join(format!("build-{conf}"));
         Dirs {
-            src: base.join("src"),
-            build,
+            build: base.join(format!("build-{conf}")),
             prefix: base.join(conf.name()),
-            report: base.join(conf.name()),
+            report: base.join("statistics.csv"),
+            source: base.join("src"),
         }
     }
 }
@@ -47,7 +46,7 @@ pub fn run(
         let dirs = Dirs::new(&tc.targets_root, &prog.name, conf);
         let vars = vars(tc, conf, &dirs, jobs);
         let mut commands = commands(&prog, &vars, &dirs)?;
-        let report = dirs.build.join("stat-report.csv");
+        let report = dirs.report.clone();
         if conf.needs_ir_plugin() {
             commands.iter_mut().for_each(|c| {
                 c.env("SS_REPORT_DEST", &report);
@@ -95,14 +94,14 @@ pub fn run(
 
 fn prepare(prog: &Program, dirs: &Dirs) -> Vec<Command> {
     let mut v = Vec::new();
-    if !dirs.src.join(".git").is_dir() {
+    if !dirs.source.join(".git").is_dir() {
         let mut c = Command::new("git");
-        c.args(["clone", "-q", &prog.source.git]).arg(&dirs.src);
+        c.args(["clone", "-q", &prog.source.git]).arg(&dirs.source);
         v.push(c);
     }
 
     let mut c = Command::new("git");
-    c.arg("-C").arg(&dirs.src).args([
+    c.arg("-C").arg(&dirs.source).args([
         "-c",
         "advice.detachedHead=false",
         "checkout",
@@ -118,7 +117,7 @@ fn prepare(prog: &Program, dirs: &Dirs) -> Vec<Command> {
     if prog.build.copy_source {
         let mut c = Command::new("git");
         c.args(["clone", "-q", "--shared", "--no-checkout"])
-            .arg(&dirs.src)
+            .arg(&dirs.source)
             .arg(&dirs.build);
         v.push(c);
 
@@ -214,7 +213,7 @@ pub fn vars(tc: &Toolchain, conf: BuildConf, dirs: &Dirs, jobs: usize) -> Vars {
         ("copt", tc.compile_flags(conf).join(" ")),
         ("ldopt", tc.link_flags(conf).join(" ")),
         ("jobs", jobs.to_string()),
-        ("src", dirs.src.display().to_string()),
+        ("src", dirs.source.display().to_string()),
         ("build", dirs.build.display().to_string()),
         ("prefix", dirs.prefix.display().to_string()),
         ("report", dirs.report.display().to_string()),
