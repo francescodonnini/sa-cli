@@ -9,3 +9,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 libc = "0.2.1"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.2.1+spec-1.1.0"
+
+[[bin]]
+name = "btp"
+path = "src/main.rs"
