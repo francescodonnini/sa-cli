@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
 use crate::conf::{BuildConf, BuildList};
 use crate::ir_report::IrReport;
 use crate::program::Program;
 use crate::toolchain::Toolchain;
-use crate::{doctor, verify, RunMode};
+use crate::{RunMode, doctor, verify};
 use anyhow::{Context, Result, bail};
+use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader};

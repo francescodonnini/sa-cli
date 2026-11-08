@@ -20,7 +20,10 @@ impl Toolchain {
             clang: Self::get_path("CLANG", home.join("llvm-project/build/bin/clang")),
             runtime: Self::get_path("RT", home.join("runtime/build")),
             ir_pass: Self::get_path("IR_PASS", home.join("shadow_stack/build/ShadowStack.so")),
-            programs: Self::get_path("SS_PROGRAMS", PathBuf::from("./programs")),
+            programs: Self::get_path(
+                "SS_PROGRAMS",
+                PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/programs")),
+            ),
         }
     }
 
