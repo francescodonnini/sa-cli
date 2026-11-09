@@ -2,15 +2,36 @@ use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::Path;
 
+const COLUMNS: [&str; 22] = [
+    "functions",
+    "stores_seen",
+    "instrumented",
+    "already_masked",
+    "skipped_constaddr",
+    "skipped_knownbits",
+    "skipped_domtree",
+    "store_inst",
+    "vector_stores",
+    "atomic_rmw",
+    "cmpxchg",
+    "mem_intrinsics",
+    "masked_store",
+    "arch_specific",
+    "scatter",
+    "unhandled_writes",
+    "inline_asm",
+    "external_calls_may_write",
+    "base_small_off",
+    "distinct_bases",
+    "non_zero_off",
+    "inplace",
+];
+
+
 #[derive(Debug, Default, PartialEq)]
 pub struct IrReport {
     pub files: u64,
-    pub functions: u64,
-    pub stores: u64,
-    pub masked: u64,
-    pub skipped_constaddr: u64,
-    pub skipped_knownbits: u64,
-    pub skipped_domtree: u64,
+    totals: [u64; COLUMNS.len()],
 }
 
 impl IrReport {
@@ -30,48 +51,71 @@ impl IrReport {
             let f: Vec<&str> = line.split(',').collect();
             if f.len() != 7 {
                 bail!(
-                    "{}:{}: expected 7 fields, got {}",
+                    "{}:{}: expected {} fields (file + {} counters), got {}: is COLUMNS in sync with SSReportPass?",
                     path.display(),
                     i + 1,
+                    COLUMNS.len() + 1,
+                    COLUMNS.len(),
                     f.len()
                 );
+
             }
-            let n = |j: usize| -> Result<u64> {
-                f[j].trim().parse().with_context(|| {
-                    format!(
-                        "{}:{}: field {} is not a number",
-                        path.display(),
-                        i + 1,
-                        j + 1
-                    )
-                })
-            };
+            for (j, v) in f[1..].iter().enumerate() {
+                r.totals[j] += v.trim().parse::<u64>().with_context(|| {
+                    format!("{}:{}: {} is not a number", path.display(), i + 1, COLUMNS[j])
+                })?;
+            }
+
             r.files += 1;
-            r.functions += n(1)?;
-            r.stores += n(2)?;
-            r.masked += n(3)?;
-            r.skipped_constaddr += n(4)?;
-            r.skipped_knownbits += n(5)?;
-            r.skipped_domtree += n(6)?;
         }
         Ok(Some(r))
     }
 
     pub fn summary(&self) -> String {
-        let pct = if self.stores > 0 {
-            100.0 * self.masked as f64 / self.stores as f64
-        } else {
-            0.0
-        };
-        format!(
-            "IR pass: {} files, {} functions, {} stores, {} masked ({pct:.1}%), skipped: constaddr {}, knownbits {}, domtree {}",
+        let g = |n| self.get(n);
+        let seen = g("stores_seen");
+        let pct = |v: u64| if seen > 0 { 100.0 * v as f64 / seen as f64 } else { 0.0 };
+        let masked = g("instrumented") + g("inplace");
+        let mut s = format!(
+            "IR pass: {} files, {} functions, {seen} stores: {masked} masked ({:.1}%; inplace {}), \
+             already masked {}, skipped: constaddr {}, knownbits {}, domtree {}",
             self.files,
-            self.functions,
-            self.stores,
-            self.masked,
-            self.skipped_constaddr,
-            self.skipped_knownbits,
-            self.skipped_domtree
-        )
+            g("functions"),
+            pct(masked),
+            g("inplace"),
+            g("already_masked"),
+            g("skipped_constaddr"),
+            g("skipped_knownbits"),
+            g("skipped_domtree"),
+        );
+        let accounted = masked
+            + g("already_masked")
+            + g("skipped_constaddr")
+            + g("skipped_knownbits")
+            + g("skipped_domtree");
+        if accounted != seen {
+            s += &format!("\n  WARNING: {seen} stores seen but {accounted} accounted");
+        }
+        let unprotected: Vec<String> = [
+            ("unhandled intrinsics", "unhandled_writes"),
+            ("inline asm", "inline_asm"),
+            ("external calls that may write", "external_calls_may_write"),
+        ]
+            .iter()
+            .filter(|(_, col)| g(col) > 0)
+            .map(|(label, col)| format!("{label} {}", g(col)))
+            .collect();
+        if !unprotected.is_empty() {
+            s += &format!("\n  not protected: {}", unprotected.join(", "));
+        }
+        s
     }
+
+
+    /// Totale di una colonna. Il nome deve essere in COLUMNS.
+    pub fn get(&self, name: &str) -> u64 {
+        let i = COLUMNS.iter().position(|c| *c == name);
+        self.totals[i.unwrap_or_else(|| panic!("unknown report column {name}"))]
+    }
+
 }
