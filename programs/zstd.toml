@@ -14,3 +14,22 @@ steps = [
 env = { MOREFLAGS = "{copt}", LDFLAGS = "{ldopt}", ZSTD_NO_ASM = "1" }
 install = { "programs/zstd" = "zstd" }
 verify = ["programs/zstd", "tests/fuzzer", "tests/zstreamtest"]
+
+[test]
+[[test.suite]]
+name = "playTests"
+cwd = "{build}/tests"
+cmd = ["./playTests.sh"]
+env = { ZSTD_BIN = "{prefix}/zstd", DATAGEN_BIN = "./datagen" }
+
+[[test.suite]]
+name = "fuzzer"
+cmd = ["{build}/tests/fuzzer", "-s1234", "-i1000"]
+
+[[test.suite]]
+name = "zstreamtest"
+cmd = ["{build}/tests/zstreamtest", "-s1234", "-i1000"]
+
+[[test.suite]]
+name = "zstreamtest-newapi"
+cmd = ["{build}/tests/zstreamtest", "--newapi", "-t1", "-s1234", "-i1000"]

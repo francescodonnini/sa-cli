@@ -1,8 +1,8 @@
 use anyhow::{Error, bail};
+use clap::builder::PossibleValue;
 use std::cmp::PartialEq;
 use std::fmt;
 use std::str::FromStr;
-use clap::builder::PossibleValue;
 
 /// Build configurations list
 ///     Vanilla: program is compiled as is
@@ -165,6 +165,10 @@ impl BuildList {
 
     pub fn iter(&self) -> impl Iterator<Item = BuildConf> + '_ {
         std::iter::once(self.head).chain(self.tail.iter().copied())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut BuildConf> + '_ {
+        std::iter::once(&mut self.head).chain(self.tail.iter_mut())
     }
 
     pub fn is_empty(&self) -> bool {

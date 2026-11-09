@@ -1,9 +1,11 @@
 mod build;
+mod common;
 mod conf;
 mod doctor;
-mod ir_report;
+mod parsers;
 mod program;
 mod report;
+mod test;
 mod toolchain;
 mod verify;
 
@@ -58,24 +60,28 @@ enum Command {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
         builds: BuildList,
-        #[arg(short, long)]
-        jobs: Option<usize>,
+        #[arg(short, long, default_value_t = default_jobs())]
+        jobs: usize,
     },
     #[command(arg_required_else_help = true)]
     Test {
         program: String,
+        #[arg(value_name = "CONFS", value_parser = BuildListParser)]
         builds: BuildList,
+        #[arg(short, long, default_value_t = default_jobs())]
+        jobs: usize,
     },
     #[command(arg_required_else_help = true)]
-    Bench {
-        program: String,
-        builds: BuildList,
-    },
+    Bench { program: String, builds: BuildList },
     Summary {
         csv: PathBuf,
         #[arg(short, long)]
         reference: Option<BuildConf>,
     },
+}
+
+fn default_jobs() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
 }
 
 fn main() -> ExitCode {
@@ -99,11 +105,11 @@ fn run(cli: Cli) -> Result<()> {
             builds,
             jobs,
         } => {
-            let jobs =
-                jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
             build::run(&tc, &program, &builds, jobs, mode)
         }
-        Command::Test { .. } => bail!("not implemented yet"),
+        Command::Test { program, builds, jobs } => {
+            test::run(&tc, &program, &builds, jobs, mode)
+        }
         Command::Bench { .. } => bail!("not implemented yet"),
     }
 }

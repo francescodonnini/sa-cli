@@ -20,3 +20,94 @@ steps = [
     ["make", "install"],
 ]
 verify = ["{prefix}/sbin/nginx"]
+
+# ---- repository ausiliarie ---------------------------------------------------------
+# clonate una volta in $SS_ROOT/nginx/repos/<nome>; compilate (se hanno build)
+# con il compilatore di sistema, senza strumentazione
+# circa 500 script Perl: ognuno avvia l'nginx da testare con una sua configurazione
+[repos.nginx-tests]
+git = "https://github.com/nginx/nginx-tests"
+ref = "fea1a48be821d52b1be0aa320029c96ddacc39f2"
+
+# client HTTP del benchmark (compila da sé LuaJIT e OpenSSL: servono gcc e make)
+[repos.wrk]
+git = "https://github.com/wg/wrk"
+ref = "a211dd5a7050b1f9e8a9870b95513060e72ac4a0"
+build = [["make", "-j{jobs}"]]
+
+# ---- test -----------------------------------------------------------------------------
+# servono perl e prove (perl-Test-Harness)
+[test]
+[[test.suite]]
+name = "nginx-tests"
+cwd = "{repos.nginx-tests}"
+cmd = ["prove", "-j{jobs}", "."]
+env = { TEST_NGINX_BINARY = "{prefix}/sbin/nginx" }
+failures = "prove"
+
+# ---- benchmark --------------------------------------------------------------------------
+# nginx con un worker sul core 1, wrk (2 thread) sui core 2 e 3: servono almeno
+# 4 vCPU. nginx viene avviato e fermato per ogni misura; le configurazioni si
+# alternano. Valori in richieste al secondo.
+[bench]
+unit = "req/s"
+better = "higher"
+params = { duration = "10", connections = "64" }
+# {run}: cartella temporanea del benchmark; {assets}: programs/nginx/
+setup = [
+    ["mkdir", "-p", "{run}/html", "{run}/logs"],
+    ["cp", "{assets}/nginx.conf", "{run}/nginx.conf"],
+    ["cp", "{src}/docs/html/index.html", "{run}/html/small.html"],
+    ["cp", "{src}/src/http/ngx_http_core_module.c", "{run}/html/100k.html"],
+    ["truncate", "-s", "102400", "{run}/html/100k.html"],
+    ["cp", "{run}/html/100k.html", "{run}/html/gzip.html"],
+]
+
+
+[bench.server]
+scope = "case"                # un avvio per misura
+cmd = ["{prefix}/sbin/nginx", "-p", "{run}", "-c", "nginx.conf"]
+ready = { port = 18080 }
+stop = "QUIT"                 # arresto ordinato del master (daemon off: è un figlio di btp)
+cpus = "1"
+
+
+# file da 612 byte: domina il codice di nginx (parsing, header, eventi)
+[[bench.case]]
+name = "small"
+cmd = ["{repos.wrk}/wrk", "-t2", "-c{connections}", "-d{duration}s",
+    "http://127.0.0.1:18080/small.html"]
+cpus = "2,3"
+parser = "wrk"                # "Requests/sec:"; errore con risposte non 2xx o errori di socket
+
+# file da 100 KB: più peso a sendfile e al kernel
+[[bench.case]]
+name = "100k"
+cmd = ["{repos.wrk}/wrk", "-t2", "-c{connections}", "-d{duration}s",
+    "http://127.0.0.1:18080/100k.html"]
+cpus = "2,3"
+parser = "wrk"
+
+# 100 KB compressi al volo (gzip, zlib di sistema)
+[[bench.case]]
+name = "gzip"
+cmd = ["{repos.wrk}/wrk", "-t2", "-c{connections}", "-d{duration}s",
+    "-H", "Accept-Encoding: gzip", "http://127.0.0.1:18080/gzip.html"]
+cpus = "2,3"
+parser = "wrk"
+
+# una connessione nuova per richiesta: accept, pool, chiusura
+[[bench.case]]
+name = "close"
+cmd = ["{repos.wrk}/wrk", "-t2", "-c{connections}", "-d{duration}s",
+    "-H", "Connection: close", "http://127.0.0.1:18080/small.html"]
+cpus = "2,3"
+parser = "wrk"
+
+# reverse proxy verso il secondo server dello stesso processo (upstream, keep-alive)
+[[bench.case]]
+name = "proxy"
+cmd = ["{repos.wrk}/wrk", "-t2", "-c{connections}", "-d{duration}s",
+    "http://127.0.0.1:18080/proxy/small.html"]
+cpus = "2,3"
+parser = "wrk"

@@ -1,69 +1,128 @@
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
+use std::fs;
+use std::path::Path;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    Ok,
-    Fail,
-    Skip,
+const COLUMNS: [&str; 22] = [
+    "functions",
+    "stores_seen",
+    "instrumented",
+    "already_masked",
+    "skipped_constaddr",
+    "skipped_knownbits",
+    "skipped_domtree",
+    "store_inst",
+    "vector_stores",
+    "atomic_rmw",
+    "cmpxchg",
+    "mem_intrinsics",
+    "masked_store",
+    "arch_specific",
+    "scatter",
+    "unhandled_writes",
+    "inline_asm",
+    "external_calls_may_write",
+    "base_small_off",
+    "distinct_bases",
+    "non_zero_off",
+    "inplace",
+];
+
+#[derive(Debug, Default, PartialEq)]
+pub struct IrReport {
+    pub files: u64,
+    totals: [u64; COLUMNS.len()],
 }
 
-pub struct Entry {
-    pub status: Status,
-    pub name: String,
-    pub detail: String,
-}
-
-#[derive(Default)]
-pub struct Report {
-    entries: Vec<Entry>,
-}
-
-impl Report {
-    pub fn check<T>(
-        &mut self,
-        name: &str,
-        result: Result<T>,
-        detail: impl Fn(&T) -> String,
-    ) -> Option<T> {
-        let (status, detail, value) = match result {
-            Ok(v) => (Status::Ok, detail(&v), Some(v)),
-            Err(e) => (Status::Fail, format!("{e:#}"), None),
-        };
-        self.entries.push(Entry {
-            status,
-            name: name.into(),
-            detail,
-        });
-        value
-    }
-
-    pub fn failed(&self) -> bool {
-        self.entries.iter().any(|e| e.status == Status::Fail)
-    }
-
-    pub fn print(&self, only_failures: bool) {
-        for e in &self.entries {
-            if only_failures && e.status != Status::Fail {
-                continue;
-            }
-            let tag = match e.status {
-                Status::Ok => "ok",
-                Status::Fail => "FAIL",
-                Status::Skip => "skip",
-            };
-            println!("{tag:<5} {:<28} {}", e.name, e.detail);
+impl IrReport {
+    pub fn read(path: &Path) -> Result<Option<IrReport>> {
+        if !path.exists() {
+            return Ok(None);
         }
+
+        let text =
+            fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+        let mut r = IrReport::default();
+        for (i, line) in text
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim().is_empty())
+        {
+            let f: Vec<&str> = line.split(',').collect();
+            if f.len() != 7 {
+                bail!(
+                    "{}:{}: expected {} fields (file + {} counters), got {}: is COLUMNS in sync with SSReportPass?",
+                    path.display(),
+                    i + 1,
+                    COLUMNS.len() + 1,
+                    COLUMNS.len(),
+                    f.len()
+                );
+            }
+            for (j, v) in f[1..].iter().enumerate() {
+                r.totals[j] += v.trim().parse::<u64>().with_context(|| {
+                    format!(
+                        "{}:{}: {} is not a number",
+                        path.display(),
+                        i + 1,
+                        COLUMNS[j]
+                    )
+                })?;
+            }
+
+            r.files += 1;
+        }
+        Ok(Some(r))
     }
 
-    pub fn push(&mut self, e: Entry) {
-        self.entries.push(e);
+    pub fn summary(&self) -> String {
+        let g = |n| self.get(n);
+        let seen = g("stores_seen");
+        let pct = |v: u64| {
+            if seen > 0 {
+                100.0 * v as f64 / seen as f64
+            } else {
+                0.0
+            }
+        };
+        let masked = g("instrumented") + g("inplace");
+        let mut s = format!(
+            "IR pass: {} files, {} functions, {seen} stores: {masked} masked ({:.1}%; inplace {}), \
+             already masked {}, skipped: constaddr {}, knownbits {}, domtree {}",
+            self.files,
+            g("functions"),
+            pct(masked),
+            g("inplace"),
+            g("already_masked"),
+            g("skipped_constaddr"),
+            g("skipped_knownbits"),
+            g("skipped_domtree"),
+        );
+        let accounted = masked
+            + g("already_masked")
+            + g("skipped_constaddr")
+            + g("skipped_knownbits")
+            + g("skipped_domtree");
+        if accounted != seen {
+            s += &format!("\n  WARNING: {seen} stores seen but {accounted} accounted");
+        }
+        let unprotected: Vec<String> = [
+            ("unhandled intrinsics", "unhandled_writes"),
+            ("inline asm", "inline_asm"),
+            ("external calls that may write", "external_calls_may_write"),
+        ]
+        .iter()
+        .filter(|(_, col)| g(col) > 0)
+        .map(|(label, col)| format!("{label} {}", g(col)))
+        .collect();
+        if !unprotected.is_empty() {
+            s += &format!("\n  not protected: {}", unprotected.join(", "));
+        }
+        s
     }
 
-    pub fn skip(&mut self, name: &str, reason: &str) {
-        self.entries.push(Entry {
-            status: Status::Skip,
-            name: name.into(),
-            detail: reason.into(),
-        });
+    /// Totale di una colonna. Il nome deve essere in COLUMNS.
+    pub fn get(&self, name: &str) -> u64 {
+        let i = COLUMNS.iter().position(|c| *c == name);
+        self.totals[i.unwrap_or_else(|| panic!("unknown report column {name}"))]
     }
 }

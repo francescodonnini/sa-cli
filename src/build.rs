@@ -1,45 +1,16 @@
+use crate::common::{command, expand, run_logged, run_quiet, vars, Dirs, Vars};
 use crate::conf::{BuildConf, BuildList};
-use crate::ir_report::IrReport;
 use crate::program::Program;
+use crate::report::IrReport;
 use crate::toolchain::Toolchain;
 use crate::{RunMode, doctor, verify};
-use anyhow::{bail, Context, Error, Result};
-use std::collections::BTreeMap;
-use std::ffi::OsStr;
-use std::fs;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use anyhow::{Context, Error, Result};
 use clap::builder::{PossibleValue, TypedValueParser};
 use clap::error::ErrorKind;
-
-pub type Vars = BTreeMap<&'static str, String>;
-
-/// Contiene i percorsi usati durante il processo di build di un programma
-/// * `build` è il posto in cui viene salvato il programma compilato,
-/// * `prefix` è il percorso in cui viene salvata una configurazione,
-/// * `report` è il percorso del file in cui il compilatore salva le metriche raccolte dai pass
-///    del compilatore,
-/// * `source` è il percorso in cui viene salvato il codice sorgente del programma.
-pub struct Dirs {
-    pub build: PathBuf,
-    pub prefix: PathBuf,
-    pub report: PathBuf,
-    pub source: PathBuf,
-}
-
-impl Dirs {
-    pub fn new(targets_root: &Path, program: &str, conf: BuildConf) -> Dirs {
-        let base = targets_root.join(program);
-        Dirs {
-            build: base.join(format!("build-{conf}")),
-            prefix: base.join(conf.name()),
-            report: base.join("statistics.csv"),
-            source: base.join("src"),
-        }
-    }
-}
+use std::ffi::OsStr;
+use std::fs;
+use std::path::Path;
+use std::process::Command;
 
 pub fn run(
     tc: &Toolchain,
@@ -55,7 +26,7 @@ pub fn run(
     let prog = Program::load(&tc.programs, program)?;
     for conf in builds.iter() {
         let dirs = Dirs::new(&tc.targets_root, &prog.name, conf);
-        let vars = vars(tc, conf, &dirs, jobs);
+        let vars = vars(tc, &prog, conf, &dirs, jobs);
         let mut commands = commands(&prog, &vars, &dirs)?;
         let report = dirs.report.clone();
         if conf.needs_ir_plugin() {
@@ -113,50 +84,11 @@ fn commands(prog: &Program, vars: &Vars, dirs: &Dirs) -> Result<Vec<Command>> {
     }
     let mut commands = Vec::new();
     for (i, step) in prog.build.steps.iter().enumerate() {
-        let ctx = || format!("{}: build.steps[{i}]", prog.name);
-        let (program, args) = step
-            .split_first()
-            .with_context(|| format!("{}: empty command", ctx()))?;
-        let mut cmd = Command::new(expand(program, vars).with_context(ctx)?);
-        for a in args {
-            cmd.arg(expand(a, vars).with_context(ctx)?);
-        }
-        cmd.current_dir(&dirs.build)
-            .envs(env.iter().map(|(k, v)| (k, v)));
-        commands.push(cmd);
+        let command = command(step, vars, &dirs.build, &env)
+            .with_context(|| format!("{}: build.step {}", prog.name, i))?;
+        commands.push(command);
     }
     Ok(commands)
-}
-
-fn expand(template: &str, vars: &Vars) -> Result<String> {
-    let mut out = String::with_capacity(template.len());
-    let mut rest = template;
-    while let Some(i) = rest.find(['{', '}']) {
-        out.push_str(&rest[..i]);
-        let (c, after) = (rest.as_bytes()[i], &rest[i + 1..]);
-        if after.starts_with(c as char) {
-            // graffa raddoppiata: carattere letterale
-            out.push(c as char);
-            rest = &after[1..];
-        } else if c == b'}' {
-            bail!("unmatched '}}' in \"{template}\"");
-        } else {
-            let Some(end) = after.find('}') else {
-                bail!("unclosed '{{' in \"{template}\"");
-            };
-            let name = &after[..end];
-            match vars.get(name) {
-                Some(v) => out.push_str(v),
-                None => bail!(
-                    "unknown placeholder {{{name}}} in \"{template}\" (known: {})",
-                    vars.keys().copied().collect::<Vec<_>>().join(", ")
-                ),
-            }
-            rest = &after[end + 1..];
-        }
-    }
-    out.push_str(rest);
-    Ok(out)
 }
 
 /// Clona la directory da remoto, ne seleziona la versione specificata nel file toml e se c'è
@@ -222,46 +154,6 @@ fn step_name(c: &Command) -> String {
     }
 }
 
-fn run_quiet(c: &mut Command, mode: RunMode) -> Result<()> {
-    if mode == RunMode::Verbose {
-        println!("$ {c:?}");
-    }
-    let out = c.output().with_context(|| format!("cannot run {c:?}"))?;
-    if !out.status.success() {
-        bail!(
-            "{c:?} failed ({}):\n{}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(())
-}
-
-fn run_logged(c: &mut Command, log: &Path, mode: RunMode) -> Result<()> {
-    if mode == RunMode::Verbose {
-        println!("$ {c:?}");
-    }
-    let f = File::create(log).with_context(|| format!("cannot create {}", log.display()))?;
-    c.stdout(f.try_clone()?).stderr(f);
-    let status = c.status().with_context(|| format!("cannot run {c:?}"))?;
-    if !status.success() {
-        bail!(
-            "{c:?} failed ({status}), log: {}\n{}",
-            log.display(),
-            tail(log, 20)
-        );
-    }
-    Ok(())
-}
-
-fn tail(path: &Path, n: usize) -> String {
-    let Ok(f) = File::open(path) else {
-        return String::new();
-    };
-    let lines: Vec<String> = BufReader::new(f).lines().map_while(Result::ok).collect();
-    lines[lines.len().saturating_sub(n)..].join("\n")
-}
-
 fn install(prog: &Program, dirs: &Dirs) -> Result<()> {
     for (from, to) in &prog.build.install {
         let (from, to) = (dirs.build.join(from), dirs.prefix.join(to));
@@ -273,20 +165,6 @@ fn install(prog: &Program, dirs: &Dirs) -> Result<()> {
             .with_context(|| format!("cannot install {} to {}", from.display(), to.display()))?;
     }
     Ok(())
-}
-
-fn vars(tc: &Toolchain, conf: BuildConf, dirs: &Dirs, jobs: usize) -> Vars {
-    Vars::from([
-        ("cc", tc.clang.display().to_string()),
-        ("cxx", tc.clangxx().display().to_string()),
-        ("copt", tc.compile_flags(conf).join(" ")),
-        ("ldopt", tc.link_flags(conf).join(" ")),
-        ("jobs", jobs.to_string()),
-        ("src", dirs.source.display().to_string()),
-        ("build", dirs.build.display().to_string()),
-        ("prefix", dirs.prefix.display().to_string()),
-        ("report", dirs.report.display().to_string()),
-    ])
 }
 
 #[derive(Clone)]
@@ -304,12 +182,15 @@ impl TypedValueParser for BuildListParser {
         let s = value
             .to_str()
             .ok_or_else(|| clap::Error::new(ErrorKind::InvalidUtf8).with_cmd(cmd))?;
-        s.parse()
-            .map_err(|e: Error| clap::Error::raw(ErrorKind::InvalidValue, format!("{e}\n")).with_cmd(cmd))
+        s.parse().map_err(|e: Error| {
+            clap::Error::raw(ErrorKind::InvalidValue, format!("{e}\n")).with_cmd(cmd)
+        })
     }
 
     fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
-        let confs = BuildConf::ALL.iter().filter_map(clap::ValueEnum::to_possible_value);
+        let confs = BuildConf::ALL
+            .iter()
+            .filter_map(clap::ValueEnum::to_possible_value);
         let all = PossibleValue::new("all").help("every configuration");
         Some(Box::new(confs.chain(std::iter::once(all))))
     }

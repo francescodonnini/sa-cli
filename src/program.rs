@@ -6,11 +6,37 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Suite {
+    pub name: String,
+    pub commands: Vec<String>,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default = "exit_code")]
+    pub failures: String,
+}
+
+fn exit_code() -> String {
+    "exit_code".into()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Test {
+    #[serde(rename = "suite")]
+    pub suites: Vec<Suite>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Program {
     #[serde(skip)]
     pub name: String,
     pub source: Source,
     pub build: Build,
+    pub test: Option<Test>,
+    #[serde(default)]
+    pub repos: BTreeMap<String, Repo>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -19,6 +45,17 @@ pub struct Source {
     pub git: String,
     #[serde(rename = "ref")]
     pub git_ref: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repo {
+    pub git: String,
+    #[serde(rename = "ref")]
+    pub git_ref: String,
+    /// passi di build (compilatore di sistema, senza strumentazione); li userà bench
+    #[serde(default)]
+    pub build: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

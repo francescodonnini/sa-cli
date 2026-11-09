@@ -18,3 +18,24 @@ steps = [
 ]
 install = { "sapi/cli/php" = "php" }
 verify = ["sapi/cli/php"]
+
+[test]
+[[test.suite]]
+name = "run-tests"
+cwd = "{build}"
+cmd = ["sapi/cli/php", "run-tests.php", "-q", "-j{jobs}", "-w", "{out}/failed.txt",
+    "Zend", "tests", "ext", "sapi/cli"]
+env = { NO_INTERACTION = "1", TEST_PHP_EXECUTABLE = "sapi/cli/php" }
+failures = "php-run-tests"
+
+[bench]
+unit = "s"
+better = "lower"
+[[bench.case]]
+name = "bench"
+cmd = ["{prefix}/php", "-n", "{src}/Zend/bench.php"]
+parser = "php-run-tests"
+[[bench.case]]
+name = "micro_bench"
+cmd = ["{prefix}/php", "-n", "{src}/Zend/micro_bench.php"]
+parser = "php-bench"
