@@ -7,6 +7,7 @@ mod report;
 mod toolchain;
 mod verify;
 
+use crate::build::BuildListParser;
 use crate::conf::{BuildConf, BuildList};
 use crate::toolchain::Toolchain;
 use anyhow::{Result, bail};
@@ -48,11 +49,12 @@ impl Cli {
 #[derive(Subcommand)]
 enum Command {
     Doctor {
-        #[arg(default_value = "all")]
+        #[arg(value_name = "CONFS", default_value = "all", value_parser = BuildListParser)]
         builds: BuildList,
     },
     Build {
         program: String,
+        #[arg(value_name = "CONFS", value_parser = BuildListParser)]
         builds: BuildList,
         #[arg(short, long)]
         jobs: Option<usize>,

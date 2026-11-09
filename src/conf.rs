@@ -2,6 +2,7 @@ use anyhow::{Error, bail};
 use std::cmp::PartialEq;
 use std::fmt;
 use std::str::FromStr;
+use clap::builder::PossibleValue;
 
 /// Build configurations list
 ///     Vanilla: program is compiled as is
@@ -88,6 +89,28 @@ impl FromStr for BuildConf {
 impl fmt::Display for BuildConf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+impl BuildConf {
+    pub const fn description(self) -> &'static str {
+        match self {
+            BuildConf::Vanilla => "no protection",
+            BuildConf::RuntimeOnly => "runtime only (relocate_stack + libruntime), no pass",
+            BuildConf::StoreProtection => "runtime + store masking",
+            BuildConf::FunctionProtection => "runtime + function protection",
+            BuildConf::Full => "runtime + store masking + function protection",
+        }
+    }
+}
+
+impl clap::ValueEnum for BuildConf {
+    fn value_variants<'a>() -> &'a [Self] {
+        &Self::ALL
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        Some(PossibleValue::new(self.name()).help(self.description()))
     }
 }
 

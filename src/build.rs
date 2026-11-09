@@ -3,13 +3,16 @@ use crate::ir_report::IrReport;
 use crate::program::Program;
 use crate::toolchain::Toolchain;
 use crate::{RunMode, doctor, verify};
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Error, Result};
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use clap::builder::{PossibleValue, TypedValueParser};
+use clap::error::ErrorKind;
 
 pub type Vars = BTreeMap<&'static str, String>;
 
@@ -272,7 +275,7 @@ fn install(prog: &Program, dirs: &Dirs) -> Result<()> {
     Ok(())
 }
 
-pub fn vars(tc: &Toolchain, conf: BuildConf, dirs: &Dirs, jobs: usize) -> Vars {
+fn vars(tc: &Toolchain, conf: BuildConf, dirs: &Dirs, jobs: usize) -> Vars {
     Vars::from([
         ("cc", tc.clang.display().to_string()),
         ("cxx", tc.clangxx().display().to_string()),
@@ -284,4 +287,30 @@ pub fn vars(tc: &Toolchain, conf: BuildConf, dirs: &Dirs, jobs: usize) -> Vars {
         ("prefix", dirs.prefix.display().to_string()),
         ("report", dirs.report.display().to_string()),
     ])
+}
+
+#[derive(Clone)]
+pub struct BuildListParser;
+
+impl TypedValueParser for BuildListParser {
+    type Value = BuildList;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        value: &OsStr,
+    ) -> Result<BuildList, clap::Error> {
+        let s = value
+            .to_str()
+            .ok_or_else(|| clap::Error::new(ErrorKind::InvalidUtf8).with_cmd(cmd))?;
+        s.parse()
+            .map_err(|e: Error| clap::Error::raw(ErrorKind::InvalidValue, format!("{e}\n")).with_cmd(cmd))
+    }
+
+    fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
+        let confs = BuildConf::ALL.iter().filter_map(clap::ValueEnum::to_possible_value);
+        let all = PossibleValue::new("all").help("every configuration");
+        Some(Box::new(confs.chain(std::iter::once(all))))
+    }
 }
