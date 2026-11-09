@@ -48,10 +48,12 @@ impl Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(arg_required_else_help = true)]
     Doctor {
         #[arg(value_name = "CONFS", default_value = "all", value_parser = BuildListParser)]
         builds: BuildList,
     },
+    #[command(arg_required_else_help = true)]
     Build {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
@@ -59,10 +61,12 @@ enum Command {
         #[arg(short, long)]
         jobs: Option<usize>,
     },
+    #[command(arg_required_else_help = true)]
     Test {
         program: String,
         builds: BuildList,
     },
+    #[command(arg_required_else_help = true)]
     Bench {
         program: String,
         builds: BuildList,
