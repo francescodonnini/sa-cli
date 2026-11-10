@@ -1,12 +1,15 @@
+use std::ffi::CString;
 use crate::conf::BuildList;
 use crate::toolchain::Toolchain;
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use libc::R_OK;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -99,15 +102,18 @@ pub fn checks(tc: &Toolchain, builds: &BuildList, quick: bool) -> Report {
     for tool in ["objdump", "nm", "readelf", "ldd"] {
         report.push(check_version(tool));
     }
-    let version = report.check("clang", clang_version(&tc.clang), |v| {
+    let clang = report.check("clang", version(&tc.clang), |v| {
         format!("{} ({v})", tc.clang.display())
+    });
+    report.check("clang++", version(&tc.clangxx), |v| {
+        format!("{} ({v})", tc.clangxx.display())
     });
     let mut options: Vec<&str> = builds.iter().flat_map(|c| c.backend_options()).collect();
     options.sort();
     options.dedup();
     for opt in options {
         let name = format!("clang accepts {opt}");
-        if version.is_some() {
+        if clang.is_some() {
             report.check(&name, accepts_backend_option(&tc.clang, opt), |_| {
                 String::new()
             });
@@ -174,24 +180,30 @@ fn check_version(tool: &'static str) -> Entry {
     }
 }
 
-fn clang_version(clang: &Path) -> Result<String> {
-    let out = match Command::new(clang).arg("--version").output() {
+fn version(exe: &Path) -> Result<String> {
+    let out = match Command::new(exe).arg("--version").stdin(Stdio::null()).output() {
         Ok(out) => out,
-        Err(e) if e.kind() == ErrorKind::NotFound => bail!("{} not found", clang.display()),
-        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
-            bail!("{} is not executable", clang.display())
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            if exe.components().count() == 1 {
+                bail!("{} not found in PATH", exe.display())
+            }
+            bail!("{} not found", exe.display())
         }
-        Err(e) => return Err(e).with_context(|| format!("cannot run {}", clang.display())),
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            bail!("{} is not executable", exe.display())
+        }
+        Err(e) => return Err(e).with_context(|| format!("cannot run {}", exe.display())),
     };
     if !out.status.success() {
-        bail!(
-            "{} --version exited with non-zero status code {}",
-            clang.display(),
-            out.status
-        );
+        bail!("{} --version failed ({})", exe.display(), out.status);
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    Ok(text.lines().next().unwrap_or("").trim().to_string())
+    let text = if out.stdout.is_empty() { &out.stderr } else { &out.stdout };
+    Ok(String::from_utf8_lossy(text)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string())
 }
 
 fn accepts_backend_option(clang: &Path, option: &str) -> Result<()> {
@@ -268,14 +280,17 @@ fn shadow_device(p: &Path) -> Result<()> {
     if !meta.file_type().is_char_device() {
         bail!("{} exists but is not a char device", p.display());
     }
-    match OpenOptions::new().read(true).write(true).open(p) {
-        Ok(_) => Ok(()),
-        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+    let c_path = CString::new(p.as_os_str().as_bytes())
+        .with_context(|| format!("{} contains a NUL byte", p.display()))?;
+    if unsafe { libc::access(c_path.as_ptr(), libc::R_OK | libc::W_OK) } != 0 {
+        let e = std::io::Error::last_os_error();
+        if e.kind() == ErrorKind::PermissionDenied {
             bail!(
                 "{} is not accessible by the current user (check permissions or udev rule)",
                 p.display()
-            )
+            );
         }
-        Err(e) => Err(e).with_context(|| format!("cannot open {}", p.display())),
+        return Err(e).with_context(|| format!("cannot access {}", p.display()));
     }
+    Ok(())
 }
