@@ -1,7 +1,7 @@
-use std::ffi::CString;
 use crate::conf::BuildList;
 use crate::toolchain::Toolchain;
 use anyhow::{Context, Result, bail};
+use std::ffi::CString;
 use std::fs;
 use std::io::ErrorKind;
 use std::os::unix::ffi::OsStrExt;
@@ -95,7 +95,7 @@ pub fn require(tc: &Toolchain, builds: &BuildList) -> Result<()> {
     Ok(())
 }
 
-pub fn checks(tc: &Toolchain, builds: &BuildList, quick: bool) -> Report {
+pub fn checks(tc: &Toolchain, builds: &BuildList, _quick: bool) -> Report {
     let mut report = Report::default();
     for tool in ["objdump", "nm", "readelf", "ldd"] {
         report.push(check_version(tool));
@@ -105,7 +105,9 @@ pub fn checks(tc: &Toolchain, builds: &BuildList, quick: bool) -> Report {
     });
     match &tc.clangxx {
         Some(cxx) => {
-            report.check("clang++", version(cxx), |v| format!("{} ({v})", cxx.display()));
+            report.check("clang++", version(cxx), |v| {
+                format!("{} ({v})", cxx.display())
+            });
         }
         None => report.skip("clang++", "not configured and not found next to clang"),
     }
@@ -182,7 +184,11 @@ fn check_version(tool: &'static str) -> Entry {
 }
 
 fn version(exe: &Path) -> Result<String> {
-    let out = match Command::new(exe).arg("--version").stdin(Stdio::null()).output() {
+    let out = match Command::new(exe)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+    {
         Ok(out) => out,
         Err(e) if e.kind() == ErrorKind::NotFound => {
             if exe.components().count() == 1 {
@@ -198,7 +204,11 @@ fn version(exe: &Path) -> Result<String> {
     if !out.status.success() {
         bail!("{} --version failed ({})", exe.display(), out.status);
     }
-    let text = if out.stdout.is_empty() { &out.stderr } else { &out.stdout };
+    let text = if out.stdout.is_empty() {
+        &out.stderr
+    } else {
+        &out.stdout
+    };
     Ok(String::from_utf8_lossy(text)
         .lines()
         .next()

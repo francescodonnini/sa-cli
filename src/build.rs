@@ -1,12 +1,12 @@
 use crate::common::{
-    Dirs, Vars, checkout_only, clone, command, expand, run_logged, run_quiet, vars,
+    Layout, Vars, checkout_only, clone, command, expand, run_logged, run_quiet, vars,
 };
 use crate::conf::{BuildConf, BuildList};
 use crate::program::Program;
 use crate::report::IrReport;
 use crate::toolchain::Toolchain;
 use crate::{RunMode, doctor, verify};
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, bail};
 use clap::builder::{PossibleValue, TypedValueParser};
 use clap::error::ErrorKind;
 use std::ffi::OsStr;
@@ -30,13 +30,13 @@ pub fn run(
     let prog = Program::load(&tc.programs, program)?;
     if tc.clangxx.is_none() && prog.build_uses("cxx") {
         bail!(
-        "{} uses {{cxx}} but no C++ compiler was found next to {} (set clangxx in toolchain.toml)",
-        prog.name,
-        tc.clang.display()
-    );
+            "{} uses {{cxx}} but no C++ compiler was found next to {} (set clangxx in toolchain.toml)",
+            prog.name,
+            tc.clang.display()
+        );
     }
     for conf in builds.iter() {
-        let dirs = Dirs::new(&tc.targets, &prog.name, conf);
+        let dirs = tc.layout(&prog.name, conf);
         let vars = vars(tc, &prog, conf, &dirs, jobs);
         let mut commands = commands(&prog, &vars, &dirs)?;
         if conf.needs_ir_plugin() {
@@ -86,8 +86,21 @@ pub fn run(
 
 /// Estrapola i comandi da eseguire durante il processo di build e ci inserisce i parametri
 /// di ingresso.
-fn commands(prog: &Program, vars: &Vars, dirs: &Dirs) -> Result<Vec<Command>> {
+fn commands(prog: &Program, vars: &Vars, dirs: &Layout) -> Result<Vec<Command>> {
     let mut env = Vec::new();
+    if prog.build.export_flags {
+        for (name, var) in [
+            ("CC", "cc"),
+            ("CXX", "cxx"),
+            ("CFLAGS", "copt"),
+            ("CXXFLAGS", "copt"),
+            ("LDFLAGS", "ldopt"),
+        ] {
+            if let Some(value) = vars.get(var) {
+                env.push((name.to_string(), value.clone()));
+            }
+        }
+    }
     for (k, v) in &prog.build.env {
         let v = expand(v, vars).with_context(|| format!("{}: build.env.{k}", prog.name))?;
         env.push((k.clone(), v));
@@ -108,7 +121,7 @@ fn commands(prog: &Program, vars: &Vars, dirs: &Dirs) -> Result<Vec<Command>> {
 /// prog = {
 ///   name="postgres",
 ///
-fn prepare(prog: &Program, dirs: &Dirs) -> Vec<Command> {
+fn prepare(prog: &Program, dirs: &Layout) -> Vec<Command> {
     let mut v = clone(&prog.source.git, &prog.source.git_ref, &dirs.source);
     let mut c = Command::new("rm");
     c.arg("-rf").arg(&dirs.build).arg(&dirs.prefix);
@@ -144,7 +157,7 @@ fn step_name(c: &Command) -> String {
     }
 }
 
-fn install(prog: &Program, dirs: &Dirs) -> Result<()> {
+fn install(prog: &Program, dirs: &Layout) -> Result<()> {
     for (from, to) in &prog.build.install {
         let (from, to) = (dirs.build.join(from), dirs.prefix.join(to));
         if let Some(parent) = to.parent() {

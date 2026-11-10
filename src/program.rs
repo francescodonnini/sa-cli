@@ -35,6 +35,8 @@ pub struct Program {
     pub test: Option<Test>, // test
     #[serde(default)]
     pub repos: BTreeMap<String, Repo>, // test & benchmarks
+    // placeholder
+    pub bench: Option<toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +50,9 @@ pub struct Source {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Build {
+    /// Esporta CC, CXX, CFLAGS, CXXFLAGS e LDFLAGS (per autotools, CMake, Make)
+    #[serde(default)]
+    pub export_flags: bool,
     #[serde(default)]
     pub copy_source: bool,
     pub steps: Vec<Vec<String>>,

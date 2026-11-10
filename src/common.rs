@@ -1,7 +1,7 @@
 use crate::RunMode;
 use crate::conf::BuildConf;
 use crate::program::Program;
-use crate::toolchain::Toolchain;
+pub(crate) use crate::toolchain::{Layout, Toolchain};
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -10,40 +10,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 pub(crate) type Vars = BTreeMap<String, String>;
-
-/// Contiene i percorsi usati durante il processo di build di un programma
-/// + `build` è il posto in cui viene salvato il programma compilato,
-/// + `prefix` è il percorso in cui viene salvata una configurazione,
-/// + `report` è il percorso del file in cui il compilatore salva le metriche raccolte dai pass
-///    del compilatore,
-/// + `source` è il percorso in cui viene salvato il codice sorgente del programma.
-pub(crate) struct Dirs {
-    pub build: PathBuf,
-    pub prefix: PathBuf,
-    pub report: PathBuf,
-    pub source: PathBuf,
-}
-
-impl Dirs {
-    /// E.g.
-    /// targets: ~/targets
-    /// program: postgres
-    /// conf:    StoreProtection ("mask")
-    /// build:   ~/targets/postgres/build-mask
-    /// prefix:  ~/targets/postgres/mask
-    /// report:  ~/targets/postgres/build-mask/statistics.csv
-    /// source:  ~/targets/postgres/src
-    pub(crate) fn new(targets: &Path, program: &str, conf: BuildConf) -> Dirs {
-        let base = targets.join(program);
-        let build = base.join(format!("build-{conf}"));
-        Dirs {
-            report: build.join("statistics.csv"),
-            build,
-            prefix: base.join(conf.name()),
-            source: base.join("src"),
-        }
-    }
-}
 
 /// Cartella di una repository ausiliaria: <targets>/<programma>/repos/<nome>.
 pub(crate) fn repo_dir(targets: &Path, program: &str, name: &str) -> PathBuf {
@@ -168,11 +134,13 @@ fn tail(path: &Path, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
+/// Costruisce una tabella di coppie chiave-valore dove le chiavi potrebbero apparire nella lista
+/// dei comandi di build, e i valori sono presi da `Toolchain` e `Dirs`.
 pub(crate) fn vars(
     tc: &Toolchain,
     program: &Program,
     conf: BuildConf,
-    dirs: &Dirs,
+    dirs: &Layout,
     jobs: usize,
 ) -> Vars {
     let mut v = Vars::from([

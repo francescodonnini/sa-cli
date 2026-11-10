@@ -1,4 +1,4 @@
-use crate::common::{Dirs, clone, command, expand, repo_dir, run_quiet, spawn_logged, vars};
+use crate::common::{clone, command, expand, repo_dir, run_quiet, spawn_logged, vars};
 use crate::conf::{BuildConf, BuildList};
 use crate::parsers::{FailureParser, prove};
 use crate::program::{Program, Suite};
@@ -44,7 +44,7 @@ pub fn run(
     };
     let mut failed: BTreeMap<BuildConf, BTreeSet<String>> = BTreeMap::new();
     for build in aug.iter() {
-        let dirs = Dirs::new(&tc.targets, &prog.name, build);
+        let dirs = tc.layout(&prog.name, build);
         if !dirs.prefix.is_dir() || !dirs.build.is_dir() {
             bail!("{build}: not built (run `btp build {} {build}`)", prog.name);
         }

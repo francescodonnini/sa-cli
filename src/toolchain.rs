@@ -62,7 +62,50 @@ struct ToolchainFile {
     pub targets: Option<PathBuf>,
 }
 
+/// Dove vive su disco una coppia (programma, configurazione), sotto `targets`:
+/// + `build` è il posto in cui viene salvato il programma compilato,
+/// + `prefix` è il percorso in cui viene salvata una configurazione,
+/// + `report` è il percorso del file in cui il compilatore salva le metriche raccolte dai pass
+///    del compilatore,
+/// + `source` è il percorso in cui viene salvato il codice sorgente del programma.
+/// ```text
+/// <targets>/<programma>/src          sorgente (condiviso tra le configurazioni)
+/// <targets>/<programma>/build-<conf> cartella di build, log e statistics.csv
+/// <targets>/<programma>/<conf>       installazione (prefix)
+/// ```
+pub(crate) struct Layout {
+    pub build: PathBuf,
+    pub prefix: PathBuf,
+    pub report: PathBuf,
+    pub source: PathBuf,
+}
+
+impl Layout {
+    /// E.g.
+    /// targets: ~/targets
+    /// program: postgres
+    /// conf:    StoreProtection ("mask")
+    /// build:   ~/targets/postgres/build-mask
+    /// prefix:  ~/targets/postgres/mask
+    /// report:  ~/targets/postgres/build-mask/statistics.csv
+    /// source:  ~/targets/postgres/src
+    fn new(targets: &Path, program: &str, conf: BuildConf) -> Layout {
+        let base = targets.join(program);
+        let build = base.join(format!("build-{conf}"));
+        Layout {
+            report: build.join("statistics.csv"),
+            build,
+            prefix: base.join(conf.name()),
+            source: base.join("src"),
+        }
+    }
+}
+
 impl Toolchain {
+    pub(crate) fn layout(&self, program: &str, conf: BuildConf) -> Layout {
+        Layout::new(&self.targets, program, conf)
+    }
+
     /// Legge il file .toml in `path`. Per quanto riguarda `fun_pass`, `programs`, `results`,
     /// `runtime` e `targets` se non sono presenti valori nel file .toml indicato, allora vengono
     /// assegnati a valori di default.
@@ -109,7 +152,9 @@ impl Toolchain {
                 None => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/programs")),
             },
             results: r.or_home(file.results, "results").context("results")?,
-            runtime: r.or_home(file.runtime, "runtime/build").context("runtime")?,
+            runtime: r
+                .or_home(file.runtime, "runtime/build")
+                .context("runtime")?,
             targets: r.or_home(file.targets, "targets").context("targets")?,
         })
     }
@@ -183,7 +228,11 @@ impl Resolver<'_> {
     /// Come `path`, ma un nome semplice ("clang") resta invariato: lo cerca `Command` nel PATH.
     fn exe(&self, p: &Path) -> Result<PathBuf> {
         let bare = p.parent().is_some_and(|d| d.as_os_str().is_empty()) && p != Path::new("~");
-        if bare { Ok(p.to_path_buf()) } else { self.path(p) }
+        if bare {
+            Ok(p.to_path_buf())
+        } else {
+            self.path(p)
+        }
     }
 
     /// Il valore del file, se presente; altrimenti $HOME/`default`.
