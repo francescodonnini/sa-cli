@@ -3,13 +3,11 @@ use crate::conf::BuildList;
 use crate::toolchain::Toolchain;
 use anyhow::{Context, Result, bail};
 use std::fs;
-use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use libc::R_OK;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Status {
