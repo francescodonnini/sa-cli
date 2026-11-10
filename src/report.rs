@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use std::fs;
+use std::{fs, io};
 use std::path::Path;
 
 const COLUMNS: [&str; 22] = [
@@ -35,20 +35,21 @@ pub struct IrReport {
 
 impl IrReport {
     pub fn read(path: &Path) -> Result<Option<IrReport>> {
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let text =
-            fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+        let text = match fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+        };
         let mut r = IrReport::default();
         for (i, line) in text
             .lines()
             .enumerate()
             .filter(|(_, l)| !l.trim().is_empty())
         {
+            // i campi del csv sono composti dalle statistiche (le cui metriche di riferimento sono
+            // riportate in `COLUMNS`) più il nome del file corrispondente
             let f: Vec<&str> = line.split(',').collect();
-            if f.len() != 7 {
+            if f.len() != COLUMNS.len() + 1 {
                 bail!(
                     "{}:{}: expected {} fields (file + {} counters), got {}: is COLUMNS in sync with SSReportPass?",
                     path.display(),
