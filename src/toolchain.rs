@@ -2,7 +2,7 @@ use crate::conf::BuildConf;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use std::{env, fs};
+use std::{env, fs, io};
 
 const TEMPLATE: &str = include_str!("toolchain.toml");
 
@@ -34,7 +34,7 @@ pub struct Toolchain {
     pub clang: PathBuf,
     /// `clangxx` è il percorso al compilatore C++; se assente viene ricavato da `clang`
     /// (`clang-20` -> `clang++-20`),
-    pub clangxx: PathBuf,
+    pub clangxx: Option<PathBuf>,
     /// `fun_pass` è il percorso al `FunctionPass` (LLVM IR) che applica la maschera, per esempio
     /// `~(1<<47)` se si usa la paginazione a quattro livelli, agli indirizzi di destinazione delle
     /// scritture.
@@ -77,54 +77,59 @@ impl Toolchain {
     /// La funzione fallisce nel caso in cui non è possibile leggere il contenuto del file indicato
     /// in `path` oppure se presenta degli errori di formato.
     pub fn load(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            bail!("{} does not exist (run `btp init`)", path.display());
-        }
-        let text =
-            fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
+        let text = match fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                bail!("{} does not exist (run `btp init`)", path.display())
+            }
+            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+        };
         let file: ToolchainFile =
             toml::from_str(&text).with_context(|| format!("invalid {}", path.display()))?;
-        let home = PathBuf::from(env::var_os("HOME").unwrap_or_default());
-        let base = path.parent().unwrap_or(Path::new("."));
-        let pick = |from_file: Option<PathBuf>, default: PathBuf| {
-            from_file.map_or(default, |p| Self::resolve(&p, &home, base))
+        let home = env::var_os("HOME")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        let r = Resolver {
+            home: home.as_deref(),
+            base: path.parent().unwrap_or(Path::new(".")),
         };
-        let clang = Self::resolve(&file.clang, &home, base);
-        let clangxx = pick(file.clangxx, Self::default_clangxx(&clang));
+        let clang = r.exe(&file.clang).context("clang")?;
+        let clangxx = match file.clangxx {
+            Some(p) => Some(r.exe(&p).context("clangxx")?),
+            None => Self::from_clang(&clang),
+        };
         Ok(Self {
             clang,
             clangxx,
-            fun_pass: pick(
-                file.fun_pass,
-                home.join("shadow_stack/build/ShadowStack.so"),
-            ),
-            programs: pick(
-                file.programs,
-                PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/programs")),
-            ),
-            results: pick(file.results, home.join("results")),
-            runtime: pick(file.runtime, home.join("runtime/build")),
-            targets: pick(file.targets, home.join("targets")),
+            fun_pass: r
+                .or_home(file.fun_pass, "shadow_stack/build/ShadowStack.so")
+                .context("fun_pass")?,
+            programs: match file.programs {
+                Some(p) => r.path(&p).context("programs")?,
+                None => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/programs")),
+            },
+            results: r.or_home(file.results, "results").context("results")?,
+            runtime: r.or_home(file.runtime, "runtime/build").context("runtime")?,
+            targets: r.or_home(file.targets, "targets").context("targets")?,
         })
     }
 
-    /// "~/x" diventa $HOME/x
-    /// Un percorso relativo viene concatenato con `base`
-    /// Un percorso assoluto viene ritornato così com'è
-    fn resolve(p: &Path, home: &Path, base: &Path) -> PathBuf {
-        match p.strip_prefix("~") {
-            Ok(rest) => home.join(rest),
-            Err(_) => base.join(p),
-        }
-    }
-
-    pub(crate) fn default_clangxx(clang: &Path) -> PathBuf {
+    /// Il compilatore C++ ricavato da `clang`, solo se esiste.
+    fn from_clang(clang: &Path) -> Option<PathBuf> {
         let name = clang.file_name().unwrap_or_default().to_string_lossy();
         let cxx = match name.strip_prefix("clang") {
-            Some(rest) => format!("clang++{}", rest),
+            Some(rest) => format!("clang++{rest}"),
             None => format!("{name}++"),
         };
-        clang.with_file_name(cxx)
+        let cxx = clang.with_file_name(cxx);
+        let bare = cxx.parent().is_some_and(|d| d.as_os_str().is_empty());
+        let found = if bare {
+            env::var_os("PATH")
+                .is_some_and(|paths| env::split_paths(&paths).any(|d| d.join(&cxx).is_file()))
+        } else {
+            cxx.is_file()
+        };
+        found.then_some(cxx)
     }
 
     pub(crate) fn compile_flags(&self, conf: BuildConf) -> Vec<String> {
@@ -153,6 +158,40 @@ impl Toolchain {
             "-lruntime".into(),
             "-Wl,--pop-state".into(),
         ]
+    }
+}
+
+struct Resolver<'a> {
+    home: Option<&'a Path>,
+    base: &'a Path,
+}
+
+impl Resolver<'_> {
+    fn home(&self) -> Result<&Path> {
+        self.home
+            .context("HOME is not set: cannot expand `~` or use a default path")
+    }
+
+    /// "~/x" -> $HOME/x; relativo -> base/x; assoluto invariato.
+    fn path(&self, p: &Path) -> Result<PathBuf> {
+        match p.strip_prefix("~") {
+            Ok(rest) => Ok(self.home()?.join(rest)),
+            Err(_) => Ok(self.base.join(p)),
+        }
+    }
+
+    /// Come `path`, ma un nome semplice ("clang") resta invariato: lo cerca `Command` nel PATH.
+    fn exe(&self, p: &Path) -> Result<PathBuf> {
+        let bare = p.parent().is_some_and(|d| d.as_os_str().is_empty()) && p != Path::new("~");
+        if bare { Ok(p.to_path_buf()) } else { self.path(p) }
+    }
+
+    /// Il valore del file, se presente; altrimenti $HOME/`default`.
+    fn or_home(&self, from_file: Option<PathBuf>, default: &str) -> Result<PathBuf> {
+        match from_file {
+            Some(p) => self.path(&p),
+            None => Ok(self.home()?.join(default)),
+        }
     }
 }
 

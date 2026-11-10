@@ -105,9 +105,12 @@ pub fn checks(tc: &Toolchain, builds: &BuildList, quick: bool) -> Report {
     let clang = report.check("clang", version(&tc.clang), |v| {
         format!("{} ({v})", tc.clang.display())
     });
-    report.check("clang++", version(&tc.clangxx), |v| {
-        format!("{} ({v})", tc.clangxx.display())
-    });
+    match &tc.clangxx {
+        Some(cxx) => {
+            report.check("clang++", version(cxx), |v| format!("{} ({v})", cxx.display()));
+        }
+        None => report.skip("clang++", "not configured and not found next to clang"),
+    }
     let mut options: Vec<&str> = builds.iter().flat_map(|c| c.backend_options()).collect();
     options.sort();
     options.dedup();

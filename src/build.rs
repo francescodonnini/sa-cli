@@ -6,7 +6,7 @@ use crate::program::Program;
 use crate::report::IrReport;
 use crate::toolchain::Toolchain;
 use crate::{RunMode, doctor, verify};
-use anyhow::{Context, Error, Result};
+use anyhow::{bail, Context, Error, Result};
 use clap::builder::{PossibleValue, TypedValueParser};
 use clap::error::ErrorKind;
 use std::ffi::OsStr;
@@ -28,6 +28,13 @@ pub fn run(
         doctor::require(tc, builds)?;
     }
     let prog = Program::load(&tc.programs, program)?;
+    if tc.clangxx.is_none() && prog.build_uses("cxx") {
+        bail!(
+        "{} uses {{cxx}} but no C++ compiler was found next to {} (set clangxx in toolchain.toml)",
+        prog.name,
+        tc.clang.display()
+    );
+    }
     for conf in builds.iter() {
         let dirs = Dirs::new(&tc.targets, &prog.name, conf);
         let vars = vars(tc, &prog, conf, &dirs, jobs);
@@ -78,7 +85,7 @@ pub fn run(
 }
 
 /// Estrapola i comandi da eseguire durante il processo di build e ci inserisce i parametri
-/// di input.
+/// di ingresso.
 fn commands(prog: &Program, vars: &Vars, dirs: &Dirs) -> Result<Vec<Command>> {
     let mut env = Vec::new();
     for (k, v) in &prog.build.env {

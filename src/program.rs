@@ -86,7 +86,7 @@ pub struct Repo {
     pub git: String,
     #[serde(rename = "ref")]
     pub git_ref: String,
-    /// passi di build (compilatore di sistema, senza strumentazione); li userà bench
+    /// Passi di build (compilatore di sistema, senza strumentazione); li userà bench
     #[serde(default)]
     pub build: Vec<Vec<String>>,
 }
@@ -100,6 +100,13 @@ impl Program {
             toml::from_str(&text).with_context(|| format!("invalid {}", path.display()))?;
         p.name = name.to_string();
         Ok(p)
+    }
+
+    /// Vero se un passo o una variabile d'ambiente della build usa `{name}`.
+    pub fn build_uses(&self, name: &str) -> bool {
+        let p = format!("{{{name}}}");
+        self.build.steps.iter().flatten().any(|a| a.contains(&p))
+            || self.build.env.values().any(|v| v.contains(&p))
     }
 }
 

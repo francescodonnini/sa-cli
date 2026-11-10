@@ -177,7 +177,6 @@ pub(crate) fn vars(
 ) -> Vars {
     let mut v = Vars::from([
         ("cc".into(), tc.clang.display().to_string()),
-        ("cxx".into(), tc.clangxx.display().to_string()),
         ("copt".into(), tc.compile_flags(conf).join(" ")),
         ("ldopt".into(), tc.link_flags(conf).join(" ")),
         ("jobs".into(), jobs.to_string()),
@@ -186,6 +185,9 @@ pub(crate) fn vars(
         ("prefix".into(), dirs.prefix.display().to_string()),
         ("report".into(), dirs.report.display().to_string()),
     ]);
+    if let Some(cxx) = &tc.clangxx {
+        v.insert("cxx".into(), cxx.display().to_string());
+    }
     for name in program.repos.keys() {
         let dir = repo_dir(&tc.targets, &program.name, name);
         v.insert(format!("repos.{name}"), dir.display().to_string());
