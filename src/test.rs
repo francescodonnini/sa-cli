@@ -1,6 +1,6 @@
 use crate::common::{clone, command, expand, repo_dir, run_quiet, spawn_logged, vars};
 use crate::conf::{BuildConf, BuildList};
-use crate::parsers::{FailureParser, prove};
+use crate::parsers::{pg, prove, tap, FailureParser};
 use crate::program::{Program, Suite};
 use crate::toolchain::Toolchain;
 use crate::{RunMode, doctor};
@@ -110,7 +110,9 @@ pub fn run(
 fn failures(suite: &Suite, status: ExitStatus, log: &Path) -> Result<Vec<String>> {
     let mut f = match suite.failures {
         FailureParser::ExitCode => Vec::new(),
+        FailureParser::Pg => pg(&String::from_utf8_lossy(&fs::read(log)?)),
         FailureParser::Prove => prove(&String::from_utf8_lossy(&fs::read(log)?)),
+        FailureParser::Tap => tap(&String::from_utf8_lossy(&fs::read(log)?)),
     };
     if !status.success() && f.is_empty() {
         f.push(format!("({status})"));

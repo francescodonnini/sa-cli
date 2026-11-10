@@ -1,7 +1,10 @@
-# Build fuori dai sorgenti. Dal repository servono bison e flex.
-# configure senza i flag della configurazione (esegue programmi di prova);
-# COPT e LDFLAGS_EX sono le variabili di Postgres per aggiungere flag.
-# make install esegue programmi appena compilati (zic): stessi flag.
+# Build fuori dai sorgenti. Servono bison, flex e, per i test TAP, perl con IPC::Run.
+# Solo il server (src/backend) è strumentato: client, librerie e programmi di test
+# restano compilati senza pass e senza runtime.
+#
+# Fase 1: tutto senza flag. Fase 2: src/backend ripulito e ricompilato con COPT e
+# LDFLAGS_EX (le variabili di Postgres per aggiungere flag). make non registra il
+# cambio di COPT, quindi install e le submake non ricompilano ciò che è aggiornato.
 [source]
 git = "https://github.com/postgres/postgres"
 ref = "REL_18_6"
@@ -9,9 +12,88 @@ ref = "REL_18_6"
 [build]
 copy_source = false
 steps = [
-    ["{src}/configure", "--prefix={prefix}", "--without-icu", "--without-readline",
-        "--without-zlib", "CC={cc}", "CFLAGS=-O2"],
-    ["make", "-s", "-j{jobs}", "COPT={copt}", "LDFLAGS_EX={ldopt}"],
-    ["make", "-s", "install", "COPT={copt}", "LDFLAGS_EX={ldopt}"],
+    ["{src}/configure", "--prefix={prefix}", "--enable-tap-tests", "--without-icu",
+        "--without-readline", "--without-zlib", "CC={cc}", "CFLAGS=-O2"],
+    # fase 1: tutto senza strumentazione
+    ["make", "-s", "-j{jobs}"],
+    # (facoltativo) varianti server di src/common e src/port, strumentate: vanno
+    # ricompilate prima del backend, il resto delle librerie torna senza flag
+    # ["make", "-s", "-C", "src/common", "clean"],
+    # ["make", "-s", "-j{jobs}", "-C", "src/common", "libpgcommon_srv.a", "COPT={copt}"],
+    # ["make", "-s", "-j{jobs}", "-C", "src/common"],
+    # ["make", "-s", "-C", "src/port", "clean"],
+    # ["make", "-s", "-j{jobs}", "-C", "src/port", "libpgport_srv.a", "COPT={copt}"],
+    # ["make", "-s", "-j{jobs}", "-C", "src/port"],
+    # fase 2: il server, con il pass e il runtime. Si cancellano gli oggetti e le
+    # liste objfiles.txt che il link di postgres legge (non clean, che rimuove
+    # anche gli header generati), poi si ricompila.
+    ["find", "src/backend", "(", "-name", "*.o", "-o", "-name", "objfiles.txt", ")", "-delete"],
+    ["rm", "-f", "src/backend/postgres"],
+    ["make", "-s", "-j{jobs}", "-C", "src/backend", "COPT={copt}", "LDFLAGS_EX={ldopt}"],
+    ["make", "-s", "install"],
 ]
 verify = [{ path = "{prefix}/bin/postgres", min_refs = 1000 }]
+
+# Ogni suite: make check crea un'installazione temporanea (tmp_install) e avvia
+# un cluster su una porta libera. Quello che make check compila (regress.so,
+# pg_regress, moduli di test) resta senza strumentazione, come i client.
+[test]
+# regressione principale (pg_regress)
+[[test.suite]]
+name = "regress"
+cmd = ["make", "-s", "check"]
+failures = "pg"
+
+# transazioni concorrenti (isolationtester): lock, MVCC, deadlock
+[[test.suite]]
+name = "isolation"
+cmd = ["make", "-s", "-C", "src/test/isolation", "check"]
+failures = "pg"
+
+# PL/pgSQL: interprete e gestione delle eccezioni (molto longjmp)
+[[test.suite]]
+name = "plpgsql"
+cmd = ["make", "-s", "-C", "src/pl/plpgsql", "check"]
+failures = "pg"
+
+# estensioni C di contrib, caricate come .so nel backend
+[[test.suite]]
+name = "contrib"
+cmd = ["make", "-s", "-k", "-C", "contrib", "check"]
+failures = "pg"
+
+# moduli di test interni (hook, memoria condivisa, background worker)
+[[test.suite]]
+name = "modules"
+cmd = ["make", "-s", "-k", "-C", "src/test/modules", "check"]
+failures = "pg"
+
+# preprocessore ECPG e libreria client
+[[test.suite]]
+name = "ecpg"
+cmd = ["make", "-s", "-C", "src/interfaces/ecpg", "check"]
+failures = "pg"
+
+# client e strumenti (TAP): psql, pg_dump, pg_ctl, initdb, pg_basebackup, pg_upgrade, ...
+[[test.suite]]
+name = "bin"
+cmd = ["make", "-s", "-k", "-C", "src/bin", "check"]
+failures = "pg"
+
+# crash recovery, replica fisica, PITR (TAP)
+[[test.suite]]
+name = "recovery"
+cmd = ["make", "-s", "-C", "src/test/recovery", "check"]
+failures = "pg"
+
+# replica logica (TAP)
+[[test.suite]]
+name = "subscription"
+cmd = ["make", "-s", "-C", "src/test/subscription", "check"]
+failures = "pg"
+
+# autenticazione locale: pg_hba, password, SCRAM (TAP)
+[[test.suite]]
+name = "authentication"
+cmd = ["make", "-s", "-C", "src/test/authentication", "check"]
+failures = "pg"

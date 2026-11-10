@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
-use std::{fs, io};
 use std::path::Path;
+use std::{fs, io};
 
 const COLUMNS: [&str; 22] = [
     "functions",
