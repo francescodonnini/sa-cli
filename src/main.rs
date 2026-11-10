@@ -63,12 +63,10 @@ enum Command {
         #[arg(short, long, default_value_t = default_jobs())]
         jobs: usize,
     },
-    #[command(arg_required_else_help = true)]
     Doctor {
         #[arg(value_name = "CONFS", default_value = "all", value_parser = BuildListParser)]
         builds: BuildList,
     },
-    #[command(arg_required_else_help = true)]
     Init {
         #[arg(long)]
         force: bool,
