@@ -1,22 +1,22 @@
-use anyhow::{bail, Context, Result};
+use crate::RunMode;
+use crate::conf::BuildConf;
+use crate::program::Program;
+use crate::toolchain::Toolchain;
+use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use crate::conf::BuildConf;
-use crate::program::{Program, Repo};
-use crate::RunMode;
-use crate::toolchain::Toolchain;
 
 pub(crate) type Vars = BTreeMap<String, String>;
 
 /// Contiene i percorsi usati durante il processo di build di un programma
-/// * `build` è il posto in cui viene salvato il programma compilato,
-/// * `prefix` è il percorso in cui viene salvata una configurazione,
-/// * `report` è il percorso del file in cui il compilatore salva le metriche raccolte dai pass
+/// + `build` è il posto in cui viene salvato il programma compilato,
+/// + `prefix` è il percorso in cui viene salvata una configurazione,
+/// + `report` è il percorso del file in cui il compilatore salva le metriche raccolte dai pass
 ///    del compilatore,
-/// * `source` è il percorso in cui viene salvato il codice sorgente del programma.
+/// + `source` è il percorso in cui viene salvato il codice sorgente del programma.
 pub(crate) struct Dirs {
     pub build: PathBuf,
     pub prefix: PathBuf,
@@ -25,39 +25,52 @@ pub(crate) struct Dirs {
 }
 
 impl Dirs {
-    pub(crate) fn new(targets_root: &Path, program: &str, conf: BuildConf) -> Dirs {
-        let base = targets_root.join(program);
-        let build = base.join("build");
+    /// E.g.
+    /// targets: ~/targets
+    /// program: postgres
+    /// conf:    StoreProtection ("mask")
+    /// build:   ~/targets/postgres/build-mask
+    /// prefix:  ~/targets/postgres/mask
+    /// report:  ~/targets/postgres/build-mask/statistics.csv
+    /// source:  ~/targets/postgres/src
+    pub(crate) fn new(targets: &Path, program: &str, conf: BuildConf) -> Dirs {
+        let base = targets.join(program);
+        let build = base.join(format!("build-{conf}"));
         Dirs {
-            build: base.join(format!("build-{conf}")),
-            prefix: base.join(conf.name()),
             report: build.join("statistics.csv"),
+            build,
+            prefix: base.join(conf.name()),
             source: base.join("src"),
         }
     }
 }
 
-/// Costruisce il percorso $SS_ROOT/<programma>/repos/<nome>
-pub(crate) fn repo_dir(targets_root: &Path, program: &str, name: &str) -> PathBuf {
-    targets_root.join(program).join("repos").join(name)
+/// Cartella di una repository ausiliaria: <targets>/<programma>/repos/<nome>.
+pub(crate) fn repo_dir(targets: &Path, program: &str, name: &str) -> PathBuf {
+    targets.join(program).join("repos").join(name)
 }
 
 /// Costruisce un vettore di comandi per ottenere la versione corretta della repository di test o
 /// benchmarks: Il vettore contiene i seguenti comandi:
 /// + `git clone` della repository se non è già presente nel sistema ed effettua
 /// + `git checkout` della versione specificata in `repo`
-pub(crate) fn repo_commands(repo: &Repo, dir: &Path) -> Vec<Command> {
+pub(crate) fn clone(git: &str, git_ref: &str, dir: &Path) -> Vec<Command> {
     let mut v = Vec::new();
     if !dir.join(".git").is_dir() {
         let mut c = Command::new("git");
-        c.args(["clone", "-q", &repo.git]).arg(dir);
+        c.args(["clone", "-q", git]).arg(dir);
         v.push(c);
     }
-    let mut c = Command::new("git");
-    c.arg("-C").arg(dir)
-        .args(["-c", "advice.detachedHead=false", "checkout", "-q", &repo.git_ref]);
-    v.push(c);
+    v.push(checkout_only(dir, git_ref));
     v
+}
+
+pub(crate) fn checkout_only(dir: &Path, git_ref: &str) -> Command {
+    let mut c = Command::new("git");
+    c.arg("-C")
+        .arg(dir)
+        .args(["-c", "advice.detachedHead=false", "checkout", "-q", git_ref]);
+    c
 }
 
 pub(crate) fn command(
@@ -71,7 +84,9 @@ pub(crate) fn command(
     for a in args {
         command.arg(expand(a, vars)?);
     }
-    command.current_dir(cwd).envs(env.iter().map(|(k, v)| (k, v)));
+    command
+        .current_dir(cwd)
+        .envs(env.iter().map(|(k, v)| (k, v)));
     Ok(command)
 }
 
@@ -96,7 +111,10 @@ pub(crate) fn expand(template: &str, vars: &Vars) -> anyhow::Result<String> {
                 Some(v) => out.push_str(v),
                 None => bail!(
                     "unknown placeholder {{{name}}} in \"{template}\" (known: {})",
-                    vars.keys().map(String::as_str).collect::<Vec<_>>().join(", ")
+                    vars.keys()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
             }
             rest = &after[end + 1..];
@@ -150,7 +168,13 @@ fn tail(path: &Path, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
-pub(crate) fn vars(tc: &Toolchain, program: &Program, conf: BuildConf, dirs: &Dirs, jobs: usize) -> Vars {
+pub(crate) fn vars(
+    tc: &Toolchain,
+    program: &Program,
+    conf: BuildConf,
+    dirs: &Dirs,
+    jobs: usize,
+) -> Vars {
     let mut v = Vars::from([
         ("cc".into(), tc.clang.display().to_string()),
         ("cxx".into(), tc.clangxx().display().to_string()),
@@ -163,7 +187,7 @@ pub(crate) fn vars(tc: &Toolchain, program: &Program, conf: BuildConf, dirs: &Di
         ("report".into(), dirs.report.display().to_string()),
     ]);
     for name in program.repos.keys() {
-        let dir = repo_dir(&tc.targets_root, &program.name, name);
+        let dir = repo_dir(&tc.targets, &program.name, name);
         v.insert(format!("repos.{name}"), dir.display().to_string());
     }
     v

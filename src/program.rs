@@ -1,42 +1,40 @@
+use crate::common;
+use crate::common::Vars;
+use crate::parsers::FailureParser;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Suite {
-    pub name: String,
-    pub commands: Vec<String>,
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    #[serde(default = "exit_code")]
-    pub failures: String,
+#[derive(Debug, Clone, Deserialize)]
+#[serde(transparent)]
+pub struct Template(String);
+
+impl Template {
+    pub(crate) fn expand(&self, vars: &Vars) -> Result<String> {
+        common::expand(&self.0, vars)
+    }
 }
 
-fn exit_code() -> String {
-    "exit_code".into()
-}
+pub(crate) type Argv = Vec<String>;
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Test {
-    #[serde(rename = "suite")]
-    pub suites: Vec<Suite>,
-}
-
+/// Contiene tutte le informazioni necessarie per il processo di build, testing e profiling di un
+/// certo programma.
+/// + `source` contiene la posizione della repository git e la versione (commit),
+/// + `build` contiene i passi necessari per compilare il programma (comandi bash),
+/// + `test` contiene i casi di test da eseguire (?),
+/// + `repos` contiene altri sorgenti che vengono usati per eseguire test o benchmark,
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Program {
     #[serde(skip)]
     pub name: String,
-    pub source: Source,
-    pub build: Build,
-    pub test: Option<Test>,
+    pub source: Source,     // tutte le fasi
+    pub build: Build,       // build
+    pub test: Option<Test>, // test
     #[serde(default)]
-    pub repos: BTreeMap<String, Repo>,
+    pub repos: BTreeMap<String, Repo>, // test & benchmarks
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,17 +43,6 @@ pub struct Source {
     pub git: String,
     #[serde(rename = "ref")]
     pub git_ref: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Repo {
-    pub git: String,
-    #[serde(rename = "ref")]
-    pub git_ref: String,
-    /// passi di build (compilatore di sistema, senza strumentazione); li userà bench
-    #[serde(default)]
-    pub build: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +57,38 @@ pub struct Build {
     pub install: BTreeMap<PathBuf, PathBuf>,
     #[serde(default)]
     pub verify: Vec<Verify>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Test {
+    #[serde(rename = "suite")]
+    pub suites: Vec<Suite>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Suite {
+    pub name: String,
+    pub cmd: Vec<String>,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub failures: FailureParser,
+}
+
+/// Contiene la posizione di una sorgente (git), la versione selezionata (commit) e la lista di
+/// comandi necessari per compilare la sorgente.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Repo {
+    pub git: String,
+    #[serde(rename = "ref")]
+    pub git_ref: String,
+    /// passi di build (compilatore di sistema, senza strumentazione); li userà bench
+    #[serde(default)]
+    pub build: Vec<Vec<String>>,
 }
 
 impl Program {

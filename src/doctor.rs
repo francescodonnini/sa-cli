@@ -135,6 +135,11 @@ pub fn checks(tc: &Toolchain, builds: &BuildList, quick: bool) -> Report {
             device.display().to_string()
         });
     }
+    if builds.iter().any(|c| c.needs_ir_plugin()) {
+        report.check("IR pass plugin", regular_file(&tc.fun_pass), |_| {
+            tc.fun_pass.display().to_string()
+        });
+    }
     report
 }
 

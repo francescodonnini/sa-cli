@@ -1,4 +1,6 @@
-use crate::common::{command, expand, run_logged, run_quiet, vars, Dirs, Vars};
+use crate::common::{
+    Dirs, Vars, checkout_only, clone, command, expand, run_logged, run_quiet, vars,
+};
 use crate::conf::{BuildConf, BuildList};
 use crate::program::Program;
 use crate::report::IrReport;
@@ -12,6 +14,9 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+/// Esegue un comando di build per `program`. `tc` viene usato per ricavare la posizione del
+/// compilatore (`clang`) e della directory dove salvare gli eseguibili prodotti al completamento
+/// del processo (`targets`).
 pub fn run(
     tc: &Toolchain,
     program: &str,
@@ -22,16 +27,14 @@ pub fn run(
     if mode != RunMode::DryRun {
         doctor::require(tc, builds)?;
     }
-
     let prog = Program::load(&tc.programs, program)?;
     for conf in builds.iter() {
-        let dirs = Dirs::new(&tc.targets_root, &prog.name, conf);
+        let dirs = Dirs::new(&tc.targets, &prog.name, conf);
         let vars = vars(tc, &prog, conf, &dirs, jobs);
         let mut commands = commands(&prog, &vars, &dirs)?;
-        let report = dirs.report.clone();
         if conf.needs_ir_plugin() {
             commands.iter_mut().for_each(|c| {
-                c.env("SS_REPORT_DEST", &report);
+                c.env("SS_REPORT_DEST", &dirs.report);
             });
         }
         if mode == RunMode::DryRun {
@@ -62,7 +65,7 @@ pub fn run(
                 verify::binary(tc, conf, &path, v.min_refs())?
             );
         }
-        if let Some(r) = IrReport::read(&report)? {
+        if let Some(r) = IrReport::read(&dirs.report)? {
             println!("  {}", r.summary());
         }
         println!(
@@ -93,24 +96,13 @@ fn commands(prog: &Program, vars: &Vars, dirs: &Dirs) -> Result<Vec<Command>> {
 
 /// Clona la directory da remoto, ne seleziona la versione specificata nel file toml e se c'è
 /// bisogno (`copy_source == true`) la copia nella directory di build.
+///
+/// E.g.
+/// prog = {
+///   name="postgres",
+///
 fn prepare(prog: &Program, dirs: &Dirs) -> Vec<Command> {
-    let mut v = Vec::new();
-    if !dirs.source.join(".git").is_dir() {
-        let mut c = Command::new("git");
-        c.args(["clone", "-q", &prog.source.git]).arg(&dirs.source);
-        v.push(c);
-    }
-
-    let mut c = Command::new("git");
-    c.arg("-C").arg(&dirs.source).args([
-        "-c",
-        "advice.detachedHead=false",
-        "checkout",
-        "-q",
-        &prog.source.git_ref,
-    ]);
-    v.push(c);
-
+    let mut v = clone(&prog.source.git, &prog.source.git_ref, &dirs.source);
     let mut c = Command::new("rm");
     c.arg("-rf").arg(&dirs.build).arg(&dirs.prefix);
     v.push(c);
@@ -121,16 +113,7 @@ fn prepare(prog: &Program, dirs: &Dirs) -> Vec<Command> {
             .arg(&dirs.source)
             .arg(&dirs.build);
         v.push(c);
-
-        let mut c = Command::new("git");
-        c.arg("-C").arg(&dirs.build).args([
-            "-c",
-            "advice.detachedHead=false",
-            "checkout",
-            "-q",
-            &prog.source.git_ref,
-        ]);
-        v.push(c);
+        v.push(checkout_only(&dirs.build, &prog.source.git_ref));
     } else {
         let mut c = Command::new("mkdir");
         c.arg("-p").arg(&dirs.build);

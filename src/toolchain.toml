@@ -1,0 +1,5 @@
+clang = "~/llvm-project-release-20.x/build/bin/clang"
+runtime = "~/runtime/build"
+ir_pass = "~/shadow_stack/build/ShadowStack.so"
+targets_root = "~/ss"
+results = "~/results"

@@ -14,6 +14,7 @@ use crate::conf::{BuildConf, BuildList};
 use crate::toolchain::Toolchain;
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
+use std::fmt::Display;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -27,9 +28,11 @@ pub enum RunMode {
 #[derive(Parser)]
 #[command(
     version,
-    about = "Build, test and benchmark programs protected by the shadow stack solution."
+    about = "Build, test and profile programs protected by the shadow stack solution."
 )]
 struct Cli {
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
     #[arg(long, global = true)]
     dry_run: bool,
     #[arg(short, long, global = true)]
@@ -51,10 +54,7 @@ impl Cli {
 #[derive(Subcommand)]
 enum Command {
     #[command(arg_required_else_help = true)]
-    Doctor {
-        #[arg(value_name = "CONFS", default_value = "all", value_parser = BuildListParser)]
-        builds: BuildList,
-    },
+    Bench { program: String, builds: BuildList },
     #[command(arg_required_else_help = true)]
     Build {
         program: String,
@@ -64,6 +64,21 @@ enum Command {
         jobs: usize,
     },
     #[command(arg_required_else_help = true)]
+    Doctor {
+        #[arg(value_name = "CONFS", default_value = "all", value_parser = BuildListParser)]
+        builds: BuildList,
+    },
+    #[command(arg_required_else_help = true)]
+    Init {
+        #[arg(long)]
+        force: bool,
+    },
+    Summary {
+        csv: PathBuf,
+        #[arg(short, long)]
+        reference: Option<BuildConf>,
+    },
+    #[command(arg_required_else_help = true)]
     Test {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
@@ -71,17 +86,23 @@ enum Command {
         #[arg(short, long, default_value_t = default_jobs())]
         jobs: usize,
     },
-    #[command(arg_required_else_help = true)]
-    Bench { program: String, builds: BuildList },
-    Summary {
-        csv: PathBuf,
-        #[arg(short, long)]
-        reference: Option<BuildConf>,
-    },
 }
 
 fn default_jobs() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+impl Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::Bench { .. } => write!(f, "bench"),
+            Command::Build { .. } => write!(f, "build"),
+            Command::Doctor { .. } => write!(f, "doctor"),
+            Command::Init { .. } => write!(f, "init"),
+            Command::Summary { .. } => write!(f, "summary"),
+            Command::Test { .. } => write!(f, "test"),
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -95,21 +116,41 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let tc = Toolchain::from_env();
     let mode = cli.mode();
+    // init viene eseguito prima di qualunque altra cosa perché gli altri comandi hanno bisogno di
+    // leggere il file toolchain.toml mentre init deve crearlo.
+    let toolchain_file = cli.config.unwrap_or_else(default_config);
+    if let Command::Init { force } = cli.command {
+        return toolchain::init(&toolchain_file, force);
+    }
+
+    let tc = Toolchain::load(&toolchain_file)?;
     match cli.command {
-        Command::Doctor { builds } => doctor::run(&tc, &builds, true),
-        Command::Summary { .. } => bail!("not implemented yet"),
         Command::Build {
             program,
             builds,
             jobs,
-        } => {
-            build::run(&tc, &program, &builds, jobs, mode)
-        }
-        Command::Test { program, builds, jobs } => {
-            test::run(&tc, &program, &builds, jobs, mode)
-        }
-        Command::Bench { .. } => bail!("not implemented yet"),
+        } => build::run(&tc, &program, &builds, jobs, mode),
+        Command::Doctor { builds } => doctor::run(&tc, &builds, true),
+        Command::Init { .. } => unreachable!("init command should've already been handled"),
+        Command::Test {
+            program,
+            builds,
+            jobs,
+        } => test::run(&tc, &program, &builds, jobs, mode),
+        _ => bail!("{} not implemented yet", cli.command),
     }
+}
+
+/// Ricava il percorso di default dove salvare il file toolchain.toml necessario per ricavare alcuni
+/// percorsi utilizzati durante i processi di build, benchmarking e profiling. Per esempio, è
+/// necessario per ricavare la posizione di `clang` o della cartella dei sorgenti. Il percorso di
+/// default è ~/.config/btp/toolchain.toml.
+fn default_config() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+        })
+        .join("btp/toolchain.toml")
 }
