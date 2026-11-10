@@ -1,5 +1,7 @@
-clang = "~/llvm-project-release-20.x/build/bin/clang"
+clang = "~/llvm-project-release/build/bin/clang"
+# clang = "~/llvm-project-release-20.x/build/bin/clang"
+# clangxx = "~/llvm-project-release/build/bin/clang++"  # default: ricavato da clang
 runtime = "~/runtime/build"
-ir_pass = "~/shadow_stack/build/ShadowStack.so"
-targets_root = "~/ss"
+fun_pass = "~/shadow_stack/build/ShadowStack.so"
+targets = "~/targets"
 results = "~/results"
