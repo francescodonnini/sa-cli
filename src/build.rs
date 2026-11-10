@@ -38,7 +38,7 @@ pub fn run(
     for conf in builds.iter() {
         let dirs = tc.layout(&prog.name, conf);
         let vars = vars(tc, &prog, conf, &dirs, jobs);
-        let mut commands = commands(&prog, &vars, &dirs)?;
+        let mut commands = build_steps(&prog, &vars, &dirs.build)?;
         if conf.needs_ir_plugin() {
             commands.iter_mut().for_each(|c| {
                 c.env("SS_REPORT_DEST", &dirs.report);
@@ -84,9 +84,9 @@ pub fn run(
     Ok(())
 }
 
-/// Estrapola i comandi da eseguire durante il processo di build e ci inserisce i parametri
-/// di ingresso.
-fn commands(prog: &Program, vars: &Vars, dirs: &Layout) -> Result<Vec<Command>> {
+/// Legge la lista di comandi presente `[steps]` in `[build]` e sostituisce i simboli avvolti
+/// da parentesi graffe con i valori corrispondenti riportati in `vars`.
+fn build_steps(prog: &Program, vars: &Vars, cwd: &Path) -> Result<Vec<Command>> {
     let mut env = Vec::new();
     if prog.build.export_flags {
         for (name, var) in [
@@ -107,7 +107,7 @@ fn commands(prog: &Program, vars: &Vars, dirs: &Layout) -> Result<Vec<Command>> 
     }
     let mut commands = Vec::new();
     for (i, step) in prog.build.steps.iter().enumerate() {
-        let command = command(step, vars, &dirs.build, &env)
+        let command = command(step, vars, cwd, &env)
             .with_context(|| format!("{}: build.step {}", prog.name, i))?;
         commands.push(command);
     }

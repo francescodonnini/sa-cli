@@ -39,6 +39,8 @@ pub(crate) fn checkout_only(dir: &Path, git_ref: &str) -> Command {
     c
 }
 
+/// Crea un comando pronto per essere eseguito. `argv` contiene il nome del programma da eseguire
+/// come primo elemento
 pub(crate) fn command(
     argv: &[String],
     vars: &Vars,
@@ -56,7 +58,10 @@ pub(crate) fn command(
     Ok(command)
 }
 
-pub(crate) fn expand(template: &str, vars: &Vars) -> anyhow::Result<String> {
+/// Sostituisce tutti i simboli che appaiono in `template` avvolti da due parentesi graffe `{` `}`
+/// con il valore associato al simbolo in `vars`. Se in `template` comparisse un simbolo non
+/// presente in `vars` la funzione termina in un errore.
+pub(crate) fn expand(template: &str, vars: &Vars) -> Result<String> {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(i) = rest.find(['{', '}']) {
