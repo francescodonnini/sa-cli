@@ -29,20 +29,23 @@ pub(crate) fn init(path: &Path, force: bool) -> Result<()> {
 
 /// Contiene percorsi a cartelle e programmi utili durante il processo di build, testing e
 /// benchmarking.
-/// + `clang` è il percorso all'eseguibile del compilatore,
-/// + `fun_pass` è il percorso al `FunctionPass` (LLVM IR) che applica la maschera, per esempio
-///   `~(1<<47)` se si usa la paginazione a quattro livelli, agli indirizzi di destinazione delle
-///   scritture,
-/// + `programs` è il percorso alla cartella contenente i file .toml che specificano come effettuare
-///   la build, test e benchmarking,
-/// + `results` è il percorso alla cartella dove vengono salvati i risultati delle esecuzioni,
-/// + `runtime` è il percorso all'oggetto condiviso caricato nello spazio d'indirizzamento del
-///   programma protetto.
 pub struct Toolchain {
+    /// `clang` è il percorso all'eseguibile del compilatore.
     pub clang: PathBuf,
+    /// `clangxx` è il percorso al compilatore C++; se assente viene ricavato da `clang`
+    /// (`clang-20` -> `clang++-20`),
+    pub clangxx: PathBuf,
+    /// `fun_pass` è il percorso al `FunctionPass` (LLVM IR) che applica la maschera, per esempio
+    /// `~(1<<47)` se si usa la paginazione a quattro livelli, agli indirizzi di destinazione delle
+    /// scritture.
     pub fun_pass: PathBuf,
+    /// `programs` è il percorso alla cartella contenente i file .toml che specificano come effettuare
+    /// la build, test e benchmarking.
     pub programs: PathBuf,
+    /// `results` è il percorso alla cartella dove vengono salvati i risultati delle esecuzioni.
     pub results: PathBuf,
+    /// `runtime` è il percorso all'oggetto condiviso caricato nello spazio d'indirizzamento del
+    /// programma protetto.
     pub runtime: PathBuf,
     pub targets: PathBuf,
 }
@@ -51,6 +54,7 @@ pub struct Toolchain {
 #[serde(deny_unknown_fields)]
 struct ToolchainFile {
     pub clang: PathBuf,
+    pub clangxx: Option<PathBuf>,
     pub fun_pass: Option<PathBuf>,
     pub programs: Option<PathBuf>,
     pub results: Option<PathBuf>,
@@ -85,8 +89,11 @@ impl Toolchain {
         let pick = |from_file: Option<PathBuf>, default: PathBuf| {
             from_file.map_or(default, |p| Self::resolve(&p, &home, base))
         };
+        let clang = Self::resolve(&file.clang, &home, base);
+        let clangxx = pick(file.clangxx, Self::default_clangxx(&clang));
         Ok(Self {
-            clang: Self::resolve(&file.clang, &home, base),
+            clang,
+            clangxx,
             fun_pass: pick(
                 file.fun_pass,
                 home.join("shadow_stack/build/ShadowStack.so"),
@@ -111,10 +118,13 @@ impl Toolchain {
         }
     }
 
-    pub(crate) fn clangxx(&self) -> PathBuf {
-        let mut name = self.clang.file_name().unwrap_or_default().to_os_string();
-        name.push("++");
-        self.clang.with_file_name(name)
+    pub(crate) fn default_clangxx(clang: &Path) -> PathBuf {
+        let name = clang.file_name().unwrap_or_default().to_string_lossy();
+        let cxx = match name.strip_prefix("clang") {
+            Some(rest) => format!("clang++{}", rest),
+            None => format!("{name}++"),
+        };
+        clang.with_file_name(cxx)
     }
 
     pub(crate) fn compile_flags(&self, conf: BuildConf) -> Vec<String> {
