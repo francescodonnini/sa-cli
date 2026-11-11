@@ -1,5 +1,5 @@
 # Servono pcre2-devel e zlib-devel (di sistema, non strumentate). Niente SSL.
-# configure compila e linka programmi di prova con --with-cc-opt e
+# `configure` compila e linka programmi di prova con --with-cc-opt e
 # --with-ld-opt: girano con il runtime, e il report si azzera dopo.
 [source]
 git = "https://github.com/nginx/nginx"
