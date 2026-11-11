@@ -17,8 +17,13 @@ steps = [
     ["sh", "-c", "cd vendor && ./fetch.sh"],
     ["./autogen.sh"],
     ["./configure", "CC={cc}", "--disable-coverage", "--enable-proxy", "--enable-tls"],
-    ["make", "-j{jobs}", "INCLUDES={copt}", "LDFLAGS={ldopt}",
-        "memcached", "memcached-debug", "testapp", "sizes", "timedrun"],
+    # all: memcached, memcached-debug e le librerie di vendor/ (Lua del proxy).
+    # CC sulla riga di comando arriva anche alla make di Lua, che altrimenti usa
+    # gcc senza PIE e non si linka con il clang della toolchain (PIE di default).
+    ["make", "-j{jobs}", "CC={cc}", "INCLUDES={copt}", "LDFLAGS={ldopt}"],
+    ["make", "-j{jobs}", "CC={cc}", "INCLUDES={copt}", "LDFLAGS={ldopt}", "testapp", "sizes", "timedrun"],
+    # programmi usati dai test, non compresi in all
+    ["make", "-j{jobs}", "INCLUDES={copt}", "LDFLAGS={ldopt}", "testapp", "sizes", "timedrun"],
 ]
 install = { "memcached" = "memcached" }
 verify = ["memcached", "memcached-debug"]
