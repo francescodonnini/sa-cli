@@ -63,38 +63,30 @@ struct ToolchainFile {
 }
 
 /// Dove vive su disco una coppia (programma, configurazione), sotto `targets`:
-/// + `build` è il posto in cui viene salvato il programma compilato,
-/// + `prefix` è il percorso in cui viene salvata una configurazione,
-/// + `report` è il percorso del file in cui il compilatore salva le metriche raccolte dai pass
-///    del compilatore,
-/// + `source` è il percorso in cui viene salvato il codice sorgente del programma.
 /// ```text
 /// <targets>/<programma>/src          sorgente (condiviso tra le configurazioni)
-/// <targets>/<programma>/build-<conf> cartella di build, log e statistics.csv
+/// <targets>/<programma>/build-<conf> cartella di build (con copy_source, una copia del sorgente)
+/// <targets>/<programma>/btp-<conf>   file di btp: log degli step e statistics.csv
 /// <targets>/<programma>/<conf>       installazione (prefix)
 /// ```
+/// I file di btp stanno fuori da `build` perché, con copy_source, `build` è un albero di
+/// sorgenti che alcuni test ispezionano (es. t/whitespace.t di memcached).
 pub(crate) struct Layout {
     pub build: PathBuf,
+    pub meta: PathBuf,
     pub prefix: PathBuf,
     pub report: PathBuf,
     pub source: PathBuf,
 }
 
 impl Layout {
-    /// E.g.
-    /// targets: ~/targets
-    /// program: postgres
-    /// conf:    StoreProtection ("mask")
-    /// build:   ~/targets/postgres/build-mask
-    /// prefix:  ~/targets/postgres/mask
-    /// report:  ~/targets/postgres/build-mask/statistics.csv
-    /// source:  ~/targets/postgres/src
     fn new(targets: &Path, program: &str, conf: BuildConf) -> Layout {
         let base = targets.join(program);
-        let build = base.join(format!("build-{conf}"));
+        let meta = base.join(format!("btp-{conf}"));
         Layout {
-            report: build.join("statistics.csv"),
-            build,
+            build: base.join(format!("build-{conf}")),
+            report: meta.join("statistics.csv"),
+            meta,
             prefix: base.join(conf.name()),
             source: base.join("src"),
         }

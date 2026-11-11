@@ -55,7 +55,7 @@ pub fn run(
         for mut c in prepare(&prog, &dirs) {
             run_quiet(&mut c, mode)?;
         }
-        let logs = dirs.build.join("btp-logs");
+        let logs = dirs.meta.join("logs");
         fs::create_dir_all(&logs).with_context(|| format!("cannot create {}", logs.display()))?;
         for (i, c) in commands.iter_mut().enumerate() {
             let log = logs.join(format!("{:02}-{}.log", i + 1, step_name(c)));
@@ -124,7 +124,7 @@ fn build_steps(prog: &Program, vars: &Vars, cwd: &Path) -> Result<Vec<Command>> 
 fn prepare(prog: &Program, dirs: &Layout) -> Vec<Command> {
     let mut v = clone(&prog.source.git, &prog.source.git_ref, &dirs.source);
     let mut c = Command::new("rm");
-    c.arg("-rf").arg(&dirs.build).arg(&dirs.prefix);
+    c.arg("-rf").arg(&dirs.build).arg(&dirs.prefix).arg(&dirs.meta);
     v.push(c);
 
     if prog.build.copy_source {
