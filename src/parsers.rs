@@ -42,7 +42,9 @@ pub(crate) struct Outcome {
 }
 
 impl FailureParser {
-    pub(crate) fn parse(self, log: &str) -> Outcome {
+    pub(crate) fn parse(self, raw: &str) -> Outcome {
+        let clean = strip_ansi(raw);
+        let log = clean.as_str();
         let (tap, prove, sections) = match self {
             FailureParser::Ctest => return ctest(log),
             FailureParser::ExitCode => return Outcome::default(),
@@ -296,6 +298,28 @@ fn prove_failed(l: &str) -> Option<String> {
     (wstat != 0 || failed != 0).then(|| name.trim_start_matches("./").to_string())
 }
 
+/// Rimuove le sequenze di escape ANSI (colori, stili): ESC '[' parametri lettera-finale.
+/// Un ESC non seguito da '[' viene scartato insieme al carattere successivo.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        if chars.next() == Some('[') {
+            // la sequenza termina con un carattere tra '@' e '~'
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,7 +334,7 @@ mod tests {
         let interrupted = "00:12 tcl(400/1210) ETC 00:20\n";
         assert_eq!(FailureParser::Sqlite.parse(interrupted).failed.len(), 1);
     }
-    
+
     #[test]
     fn tap_pg_regress() {
         let log = "\
@@ -349,5 +373,17 @@ Files=3, Tests=133,  1 wallclock secs
         let o = FailureParser::Pg.parse(log);
         assert_eq!(o.failed, ["src/bin/psql/t/020_cancel.pl"]);
         assert_eq!(o.counts, Some(Counts { total: 5, failed: 1, skipped: 1 }));
+    }
+
+    #[test]
+    fn redis_colored() {
+        let log = "\
+[\x1b[0;32;49mok\x1b[0m]: BITCOUNT against wrong type (0 ms)
+[\x1b[0;31;49merr\x1b[0m]: LPOS RANK in tests/unit/type/list.tcl
+[\x1b[0;33;49mskip\x1b[0m]: Test requires jemalloc
+";
+        let o = FailureParser::Redis.parse(log);
+        assert_eq!(o.failed, ["LPOS RANK in tests/unit/type/list.tcl"]);
+        assert_eq!(o.counts, Some(Counts { total: 3, failed: 1, skipped: 1 }));
     }
 }
