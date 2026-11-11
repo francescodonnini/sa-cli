@@ -73,7 +73,7 @@ pub fn run(
         String::from("conf\tsuite\tstatus\tpassed\ttotal\tskipped\tfailed\tseconds\n");
     let mut failed: BTreeMap<BuildConf, BTreeSet<String>> = BTreeMap::new();
     for &build in aug.iter() {
-        let dirs = tc.layout(&prog.name, build);
+        let dirs = tc.layout(&prog, build);
         if !dirs.prefix.is_dir() || !dirs.build.is_dir() {
             bail!("{build}: not built (run `btp build {} {build}`)", prog.name);
         }

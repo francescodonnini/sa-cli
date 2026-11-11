@@ -2,7 +2,7 @@ use crate::common::{
     Layout, NonEmptyVec, Vars, checkout_only, clone, command, expand, run_logged, run_quiet, vars,
 };
 use crate::conf::BuildConf;
-use crate::program::Program;
+use crate::program::{Program, Source};
 use crate::report::IrReport;
 use crate::toolchain::Toolchain;
 use crate::{RunMode, doctor, verify};
@@ -36,7 +36,7 @@ pub fn run(
         );
     }
     for &conf in builds.iter() {
-        let dirs = tc.layout(&prog.name, conf);
+        let dirs = tc.layout(&prog, conf);
         let vars = vars(tc, &prog, conf, &dirs, jobs);
         let mut commands = build_steps(&prog, &vars, &dirs.build)?;
         if conf.needs_ir_plugin() {
@@ -122,7 +122,10 @@ fn build_steps(prog: &Program, vars: &Vars, cwd: &Path) -> Result<Vec<Command>> 
 ///   name="postgres",
 ///
 fn prepare(prog: &Program, dirs: &Layout) -> Vec<Command> {
-    let mut v = clone(&prog.source.git, &prog.source.git_ref, &dirs.source);
+    let mut v = match &prog.source {
+        Source::Git { git, git_ref } => clone(git, git_ref, &dirs.source),
+        Source::Path { .. } => Vec::new(),
+    };
     let mut c = Command::new("rm");
     c.arg("-rf")
         .arg(&dirs.build)
@@ -131,12 +134,15 @@ fn prepare(prog: &Program, dirs: &Layout) -> Vec<Command> {
     v.push(c);
 
     if prog.build.copy_source {
+        let Source::Git { git_ref, .. } = &prog.source else {
+            unreachable!("Program::load rejects copy_source without a git source");
+        };
         let mut c = Command::new("git");
         c.args(["clone", "-q", "--shared", "--no-checkout"])
             .arg(&dirs.source)
             .arg(&dirs.build);
         v.push(c);
-        v.push(checkout_only(&dirs.build, &prog.source.git_ref));
+        v.push(checkout_only(&dirs.build, git_ref));
     } else {
         let mut c = Command::new("mkdir");
         c.arg("-p").arg(&dirs.build);
@@ -161,6 +167,10 @@ fn step_name(c: &Command) -> String {
 }
 
 fn install(prog: &Program, dirs: &Layout) -> Result<()> {
+    // prefix esiste sempre a fine build, anche se il programma non installa niente:
+    // test lo usa per sapere che l'ultima build è arrivata in fondo
+    fs::create_dir_all(&dirs.prefix)
+        .with_context(|| format!("cannot create {}", dirs.prefix.display()))?;
     for (from, to) in &prog.build.install {
         let (from, to) = (dirs.build.join(from), dirs.prefix.join(to));
         if let Some(parent) = to.parent() {

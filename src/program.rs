@@ -1,6 +1,6 @@
-use crate::common::NonEmptyVec;
+use crate::common::{expand_home, NonEmptyVec};
 use crate::parsers::FailureParser;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -53,11 +53,14 @@ pub struct Program {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Source {
-    pub git: String,
-    #[serde(rename = "ref")]
-    pub git_ref: String,
+#[serde(untagged)]
+pub enum  Source {
+    Git {
+        git: String,
+        #[serde(rename = "ref")]
+        git_ref: String,
+    },
+    Path { path: PathBuf },
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,13 +114,24 @@ pub struct Repo {
 
 impl Program {
     pub fn load(dir: &Path, name: &str) -> Result<Program> {
-        let path = dir.join(format!("{name}.toml"));
+        let file = dir.join(format!("{name}.toml"));
         let text =
-            fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
-        let mut p: Program =
-            toml::from_str(&text).with_context(|| format!("invalid {}", path.display()))?;
-        p.name = name.to_string();
-        Ok(p)
+            fs::read_to_string(&file).with_context(|| format!("cannot read {}", file.display()))?;
+        let mut program: Program =
+            toml::from_str(&text).with_context(|| format!("invalid {}", file.display()))?;
+        program.name = name.to_string();
+        if let Source::Path { path } = &mut program.source {
+            *path = expand_home(path)
+                .with_context(|| format!("{}: source.path", path.display()))?;
+            if !path.is_absolute() {
+                bail!("source.path must be absolute or start with ~");
+            }
+            if program.build.copy_source {
+                bail!("{}: copy_source requires a git source", file.display());
+            }
+
+        }
+        Ok(program)
     }
 
     /// Vero se un passo o una variabile d'ambiente della build usa `{name}`.

@@ -250,3 +250,15 @@ pub(crate) fn vars(
     }
     v
 }
+
+pub(crate) fn expand_home(path: &Path) -> Result<PathBuf> {
+    match path.strip_prefix("~") {
+        Ok(rest) => {
+            let home = std::env::var_os("HOME")
+                .filter(|h| !h.is_empty())
+                .context("HOME is not set")?;
+            Ok(PathBuf::from(home).join(rest))
+        }
+        Err(_) => Ok(PathBuf::from(path)),
+    }
+}

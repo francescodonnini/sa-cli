@@ -3,6 +3,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
+use crate::program::{Program, Source};
 
 const TEMPLATE: &str = include_str!("toolchain.toml");
 
@@ -80,7 +81,7 @@ pub(crate) struct Layout {
 }
 
 impl Layout {
-    fn new(targets: &Path, program: &str, conf: BuildConf) -> Layout {
+    fn new(targets: &Path, program: &str, conf: BuildConf, source: PathBuf) -> Layout {
         let base = targets.join(program);
         let meta = base.join(format!("btp-{conf}"));
         Layout {
@@ -88,14 +89,18 @@ impl Layout {
             report: meta.join("statistics.csv"),
             meta,
             prefix: base.join(conf.name()),
-            source: base.join("src"),
+            source,
         }
     }
 }
 
 impl Toolchain {
-    pub(crate) fn layout(&self, program: &str, conf: BuildConf) -> Layout {
-        Layout::new(&self.targets, program, conf)
+    pub(crate) fn layout(&self, program: &Program, conf: BuildConf) -> Layout {
+        let source = match &program.source {
+            Source::Git { .. } => self.targets.join(&program.name).join("src"),
+            Source::Path { path, .. } => path.clone(),
+        };
+        Layout::new(&self.targets, &program.name, conf, source)
     }
 
     /// Legge il file .toml in `path`. Per quanto riguarda `fun_pass`, `programs`, `results`,

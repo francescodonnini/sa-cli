@@ -203,18 +203,20 @@ fn catch2(log: &str) -> Outcome {
                 });
             }
         } else if let Some(rest) = l.strip_prefix("test cases:") {
-            let n = nums(rest);
-            let total = n.first().copied().unwrap_or(0);
-            let f = rest
-                .contains("failed")
-                .then(|| n.last().copied())
-                .flatten()
-                .unwrap_or(0);
-            counts = Some(Counts {
-                total,
-                failed: f,
-                skipped: 0,
-            });
+            // "T | P passed | F failed | S skipped": il primo campo è il totale, gli altri
+            // si riconoscono dall'etichetta (l'ordine e la presenza variano tra le versioni)
+            let mut c = Counts::default();
+            for (i, field) in rest.split('|').enumerate() {
+                let mut words = field.split_whitespace();
+                let n = words.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+                match (i, words.next()) {
+                    (0, _) => c.total = n,
+                    (_, Some("failed")) => c.failed = n,
+                    (_, Some("skipped")) => c.skipped = n,
+                    _ => {}
+                }
+            }
+            counts = Some(c);
         }
     }
     let Some(c) = counts else {
@@ -512,6 +514,13 @@ fn strip_ansi(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catch2_summary_with_skipped() {
+        let log = "test cases:    7848 |    7823 passed | 25 failed | 162 skipped\n";
+        let o = FailureParser::Catch2.parse(log);
+        assert_eq!(o.counts, Some(Counts { total: 7848, failed: 25, skipped: 162 }));
+    }
 
     #[test]
     fn sqlite_summary() {
