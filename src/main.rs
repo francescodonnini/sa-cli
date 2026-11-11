@@ -10,7 +10,8 @@ mod toolchain;
 mod verify;
 
 use crate::build::BuildListParser;
-use crate::conf::{BuildConf, BuildList};
+use crate::common::NonEmptyVec;
+use crate::conf::BuildConf;
 use crate::toolchain::Toolchain;
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
@@ -54,18 +55,22 @@ impl Cli {
 #[derive(Subcommand)]
 enum Command {
     #[command(arg_required_else_help = true)]
-    Bench { program: String, builds: BuildList },
+    Bench {
+        program: String,
+        #[arg(value_name = "CONFS", value_parser = BuildListParser)]
+        builds: NonEmptyVec<BuildConf>,
+    },
     #[command(arg_required_else_help = true)]
     Build {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
-        builds: BuildList,
+        builds: NonEmptyVec<BuildConf>,
         #[arg(short, long, default_value_t = default_jobs())]
         jobs: usize,
     },
     Doctor {
         #[arg(value_name = "CONFS", default_value = "all", value_parser = BuildListParser)]
-        builds: BuildList,
+        builds: NonEmptyVec<BuildConf>,
     },
     Init {
         #[arg(long)]
@@ -80,7 +85,9 @@ enum Command {
     Test {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
-        builds: BuildList,
+        builds: NonEmptyVec<BuildConf>,
+        #[arg(short, long = "suite", value_name = "SUITES", value_delimiter = ',')]
+        suites: Option<NonEmptyVec<String>>,
         #[arg(short, long, default_value_t = default_jobs())]
         jobs: usize,
     },
@@ -134,8 +141,9 @@ fn run(cli: Cli) -> Result<()> {
         Command::Test {
             program,
             builds,
+            suites,
             jobs,
-        } => test::run(&tc, &program, &builds, jobs, mode),
+        } => test::run(&tc, &program, &builds, suites.as_ref(), jobs, mode),
         _ => bail!("{} not implemented yet", cli.command),
     }
 }

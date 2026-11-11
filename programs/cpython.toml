@@ -17,3 +17,12 @@ steps = [
     ["make", "install", "CFLAGS_NODIST={copt}", "LIBC={ldopt}"],
 ]
 verify = ["{prefix}/bin/python3"]
+
+[test]
+# `regrtest` su Lib/test con il python della build (strumentato). Senza -u le risorse
+# facoltative (rete, audio, cpu intensiva) sono disattivate: quei test vengono saltati.
+# I moduli facoltativi non compilati (es. senza tk-devel) fanno saltare i loro test.
+[[test.suite]]
+name = "regrtest"
+cmd = ["./python", "-m", "test", "-j{jobs}", "--timeout", "1200"]
+failures = "cpython"

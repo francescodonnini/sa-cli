@@ -1,15 +1,18 @@
-use std::cmp::PartialEq;
 use serde::Deserialize;
+use std::cmp::PartialEq;
 
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum FailureParser {
+    Catch2,
+    Cpython,
     Ctest,
     /// Solo codice d'uscita
     #[default]
     ExitCode,
     /// `make check` di PostgreSQL: pg_regress e prove, divisi in sezioni per cartella
     Pg,
+    Php,
     /// Riepilogo di prove (nginx)
     Prove,
     Redis,
@@ -46,9 +49,12 @@ impl FailureParser {
         let clean = strip_ansi(raw);
         let log = clean.as_str();
         let (tap, prove, sections) = match self {
+            FailureParser::Catch2 => return catch2(log),
+            FailureParser::Cpython => return cpython(log),
             FailureParser::Ctest => return ctest(log),
             FailureParser::ExitCode => return Outcome::default(),
             FailureParser::Pg => (true, true, true),
+            FailureParser::Php => return php(log),
             FailureParser::Prove => (false, true, false),
             FailureParser::Redis => return redis(log),
             FailureParser::Sqlite => return sqlite(log),
@@ -104,6 +110,95 @@ enum Status {
     Skipped,
 }
 
+/// regrtest di CPython: "N tests OK.", "Total test files: run=A/B failed=F ..." e l'elenco
+/// rientrato sotto "N tests failed:". Tutto ciò che non è passato né fallito (saltati,
+/// risorse negate, file senza test) conta come saltato. Senza riepilogo, regrtest non è
+/// arrivato alla fine.
+fn cpython(log: &str) -> Outcome {
+    let mut total: Option<usize> = None;
+    let mut failed_n = 0;
+    let mut ok = 0;
+    let mut failed = Vec::new();
+    let mut in_list = false;
+    for l in log.lines() {
+        if in_list {
+            if l.starts_with(char::is_whitespace) && !l.trim().is_empty() {
+                failed.extend(l.split_whitespace().map(str::to_string));
+                continue;
+            }
+            in_list = false;
+        }
+        let t = l.trim();
+        if let Some(rest) = t.strip_prefix("Total test files:") {
+            for kv in rest.split_whitespace() {
+                match kv.split_once('=') {
+                    Some(("run", v)) => {
+                        total = v.split('/').nth(1).and_then(|n| n.replace(',', "").parse().ok())
+                    }
+                    Some(("failed", v)) => failed_n = v.replace(',', "").parse().unwrap_or(0),
+                    _ => {}
+                }
+            }
+        } else if let Some(n) = t.strip_suffix(" tests OK.").or_else(|| t.strip_suffix(" test OK.")) {
+            ok = n.trim_start_matches("All ").replace(',', "").parse().unwrap_or(0);
+        } else if t.ends_with(" failed:") && t.starts_with(|c: char| c.is_ascii_digit()) {
+            in_list = true;
+        }
+    }
+    let Some(total) = total else {
+        return Outcome {
+            counts: None,
+            failed: vec!["(no summary: regrtest did not finish)".into()],
+        };
+    };
+    failed.sort();
+    failed.dedup();
+    let skipped = total.saturating_sub(ok + failed_n);
+    Outcome { counts: Some(Counts { total, failed: failed_n, skipped }), failed }
+}
+
+/// Catch2 (duckdb unittest): "All tests passed (A assertions in N test cases)" oppure
+/// "test cases: N | P passed | F failed". Il nome di un caso fallito sta tra due righe di
+/// trattini, nell'intestazione che il reporter stampa per ogni fallimento.
+fn catch2(log: &str) -> Outcome {
+    fn nums(s: &str) -> Vec<usize> {
+        s.split(|c: char| !c.is_ascii_digit())
+            .filter_map(|n| n.parse().ok())
+            .collect()
+    }
+    let lines: Vec<&str> = log.lines().collect();
+    let dashes = |l: &str| l.len() >= 20 && l.chars().all(|c| c == '-');
+    let mut failed = Vec::new();
+    for w in lines.windows(3) {
+        if dashes(w[0]) && dashes(w[2]) && !w[1].trim().is_empty() {
+            failed.push(w[1].trim().to_string());
+        }
+    }
+    let mut counts = None;
+    for l in &lines {
+        if let Some(rest) = l.strip_prefix("All tests passed") {
+            // "(A assertions in N test cases)": N è il secondo numero
+            if let Some(&n) = nums(rest).get(1) {
+                counts = Some(Counts { total: n, failed: 0, skipped: 0 });
+            }
+        } else if let Some(rest) = l.strip_prefix("test cases:") {
+            let n = nums(rest);
+            let total = n.first().copied().unwrap_or(0);
+            let f = rest.contains("failed").then(|| n.last().copied()).flatten().unwrap_or(0);
+            counts = Some(Counts { total, failed: f, skipped: 0 });
+        }
+    }
+    let Some(c) = counts else {
+        return Outcome {
+            counts: None,
+            failed: vec!["(no summary: unittest did not finish)".into()],
+        };
+    };
+    failed.sort();
+    failed.dedup();
+    Outcome { counts: Some(c), failed }
+}
+
 /// `testrunner.tcl` di SQLite: "E errors out of T tests in 00:35 on ...". I dettagli dei
 /// fallimenti stanno in testrunner.log (righe "!"), non nell'output. Senza riepilogo,
 /// testrunner non è arrivato alla fine: conta come fallimento.
@@ -115,7 +210,11 @@ fn sqlite(log: &str) -> Outcome {
     });
     match summary {
         Some((errors, total)) => Outcome {
-            counts: Some(Counts { total, failed: errors, skipped: 0 }),
+            counts: Some(Counts {
+                total,
+                failed: errors,
+                skipped: 0,
+            }),
             failed: if errors > 0 {
                 vec![format!("{errors} errors (see testrunner.log)")]
             } else {
@@ -155,7 +254,62 @@ fn redis(log: &str) -> Outcome {
     }
     failed.sort();
     failed.dedup();
-    Outcome { counts: Some(c), failed }
+    Outcome {
+        counts: Some(c),
+        failed,
+    }
+}
+
+/// run-tests.php di PHP: tabella di riepilogo ("Number of tests : T E", "Tests failed : N
+/// (...)") e sezioni "FAILED TEST SUMMARY" / "BORKED TEST SUMMARY" con una riga per test,
+/// "titolo [percorso.phpt]". Senza riepilogo, run-tests non è arrivato alla fine.
+fn php(log: &str) -> Outcome {
+    /// Il primo numero dopo i due punti: "Tests failed    :     3 (  0.0%)" -> 3
+    fn first_num(l: &str) -> Option<usize> {
+        l.split_once(':')?.1.split_whitespace().next()?.parse().ok()
+    }
+    let mut c = Counts::default();
+    let mut summary = false;
+    let mut failed = Vec::new();
+    let mut in_list = false;
+    for l in log.lines() {
+        let key = l.split(':').next().unwrap_or("").trim();
+        match key {
+            "Number of tests" => {
+                c.total = first_num(l).unwrap_or(0);
+                summary = true;
+                continue;
+            }
+            "Tests skipped" => c.skipped = first_num(l).unwrap_or(0),
+            "Tests failed" | "Tests borked" => c.failed += first_num(l).unwrap_or(0),
+            _ => {}
+        }
+        if l.starts_with("FAILED TEST SUMMARY") || l.starts_with("BORKED TEST SUMMARY") {
+            in_list = true;
+            continue;
+        }
+        if in_list {
+            if l.starts_with("=====") {
+                in_list = false;
+            } else if let Some((_, rest)) = l.rsplit_once('[') {
+                if let Some(path) = rest.strip_suffix(']').filter(|p| p.ends_with(".phpt")) {
+                    failed.push(path.to_string());
+                }
+            }
+        }
+    }
+    if !summary {
+        return Outcome {
+            counts: None,
+            failed: vec!["(no summary: run-tests did not finish)".into()],
+        };
+    }
+    failed.sort();
+    failed.dedup();
+    Outcome {
+        counts: Some(c),
+        failed,
+    }
 }
 
 /// Riepilogo di ctest: "N% tests passed, F tests failed out of T", poi gli elenchi
@@ -191,7 +345,10 @@ fn ctest(log: &str) -> Outcome {
     }
     failed.sort();
     failed.dedup();
-    Outcome { counts: Some(c), failed }
+    Outcome {
+        counts: Some(c),
+        failed,
+    }
 }
 
 /// "\t  5 - test_index (Failed)" -> "test_index"
@@ -329,10 +486,48 @@ mod tests {
         let ok = "0 errors out of 334087 tests in 00:35 on localhost.localdomain Linux 64-bit\n";
         let o = FailureParser::Sqlite.parse(ok);
         assert!(o.failed.is_empty());
-        assert_eq!(o.counts, Some(Counts { total: 334087, failed: 0, skipped: 0 }));
+        assert_eq!(
+            o.counts,
+            Some(Counts {
+                total: 334087,
+                failed: 0,
+                skipped: 0
+            })
+        );
 
         let interrupted = "00:12 tcl(400/1210) ETC 00:20\n";
         assert_eq!(FailureParser::Sqlite.parse(interrupted).failed.len(), 1);
+    }
+
+    #[test]
+    fn php_summary() {
+        let log = "\
+Number of tests : 100                80
+Tests skipped   :    20 ( 20.0%) --------
+Tests warned    :     0 (  0.0%) (  0.0%)
+Tests failed    :     2 (  2.0%) (  2.5%)
+Expected fail   :     1 (  1.0%) (  1.3%)
+Tests passed    :    77 ( 77.0%) ( 96.3%)
+=====================================================================
+FAILED TEST SUMMARY
+---------------------------------------------------------------------
+Bug #1 (something) [Zend/tests/bug1.phpt]
+Test foo() with [brackets] in the title [ext/standard/tests/foo.phpt]
+=====================================================================
+";
+        let o = FailureParser::Php.parse(log);
+        assert_eq!(
+            o.failed,
+            ["Zend/tests/bug1.phpt", "ext/standard/tests/foo.phpt"]
+        );
+        assert_eq!(
+            o.counts,
+            Some(Counts {
+                total: 100,
+                failed: 2,
+                skipped: 20
+            })
+        );
     }
 
     #[test]
@@ -347,7 +542,14 @@ not ok 5 - flaky # TODO known issue
 ";
         let o = FailureParser::Tap.parse(log);
         assert_eq!(o.failed, ["boolean"]);
-        assert_eq!(o.counts, Some(Counts { total: 5, failed: 1, skipped: 1 }));
+        assert_eq!(
+            o.counts,
+            Some(Counts {
+                total: 5,
+                failed: 1,
+                skipped: 1
+            })
+        );
     }
 
     #[test]
@@ -372,7 +574,14 @@ Files=3, Tests=133,  1 wallclock secs
 ";
         let o = FailureParser::Pg.parse(log);
         assert_eq!(o.failed, ["src/bin/psql/t/020_cancel.pl"]);
-        assert_eq!(o.counts, Some(Counts { total: 5, failed: 1, skipped: 1 }));
+        assert_eq!(
+            o.counts,
+            Some(Counts {
+                total: 5,
+                failed: 1,
+                skipped: 1
+            })
+        );
     }
 
     #[test]
@@ -384,6 +593,13 @@ Files=3, Tests=133,  1 wallclock secs
 ";
         let o = FailureParser::Redis.parse(log);
         assert_eq!(o.failed, ["LPOS RANK in tests/unit/type/list.tcl"]);
-        assert_eq!(o.counts, Some(Counts { total: 3, failed: 1, skipped: 1 }));
+        assert_eq!(
+            o.counts,
+            Some(Counts {
+                total: 3,
+                failed: 1,
+                skipped: 1
+            })
+        );
     }
 }

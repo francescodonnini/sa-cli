@@ -20,3 +20,12 @@ steps = [
 ]
 install = { "build/duckdb" = "duckdb" }
 verify = ["build/duckdb", "build/test/unittest", "build/benchmark/benchmark_runner"]
+
+[test]
+# unittest (Catch2): test C++ e file test/**/*.test di sqllogictest, con percorsi
+# relativi alla radice del sorgente. Senza argomenti esegue tutto tranne i test
+# marcati [.] (lenti), come la CI di duckdb.
+[[test.suite]]
+name = "unittest"
+cmd = ["build/test/unittest"]
+failures = "catch2"

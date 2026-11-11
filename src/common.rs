@@ -2,14 +2,97 @@ use crate::RunMode;
 use crate::conf::BuildConf;
 use crate::program::Program;
 pub(crate) use crate::toolchain::{Layout, Toolchain};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Error, Result, anyhow, bail};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::str::FromStr;
 
 pub(crate) type Vars = BTreeMap<String, String>;
+
+#[derive(Clone, Debug)]
+pub struct NonEmptyVec<T> {
+    head: T,
+    tail: Vec<T>,
+}
+
+impl<T: PartialEq> TryFrom<Vec<T>> for NonEmptyVec<T> {
+    type Error = Error;
+
+    fn try_from(items: Vec<T>) -> std::result::Result<Self, Self::Error> {
+        let mut it = items.into_iter();
+        let head = it.next().ok_or_else(|| anyhow!("empty list"))?;
+        let mut l = Self::single(head);
+        it.for_each(|x| l.push(x));
+        Ok(l)
+    }
+}
+
+impl<T> NonEmptyVec<T> {
+    pub fn single(one: T) -> Self {
+        Self {
+            head: one,
+            tail: vec![],
+        }
+    }
+
+    pub fn first(&self) -> &T {
+        &self.head
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &T> + '_ {
+        std::iter::once(&self.head).chain(self.tail.iter())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> + '_ {
+        std::iter::once(&mut self.head).chain(self.tail.iter_mut())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    pub fn len(&self) -> usize {
+        1 + self.tail.len()
+    }
+}
+
+impl<T: PartialEq> NonEmptyVec<T> {
+    pub fn contains(&self, elem: &T) -> bool {
+        &self.head == elem || self.tail.contains(elem)
+    }
+
+    pub fn push(&mut self, elem: T) {
+        self.tail.push(elem);
+    }
+}
+
+impl<'a, T> IntoIterator for &'a NonEmptyVec<T> {
+    type Item = &'a T;
+    type IntoIter = std::iter::Chain<std::iter::Once<&'a T>, std::slice::Iter<'a, T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        std::iter::once(&self.head).chain(self.tail.iter())
+    }
+}
+
+impl FromStr for NonEmptyVec<String> {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, String> {
+        let names = s
+            .split(',')
+            .map(|p| match p.trim() {
+                "" => Err(format!("empty name in \"{s}\"")),
+                p => Ok(p.to_string()),
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        // split restituisce sempre almeno un pezzo, quindi names non è mai vuoto
+        NonEmptyVec::try_from(names).map_err(|e| e.to_string())
+    }
+}
 
 /// Cartella di una repository ausiliaria: <targets>/<programma>/repos/<nome>.
 pub(crate) fn repo_dir(targets: &Path, program: &str, name: &str) -> PathBuf {

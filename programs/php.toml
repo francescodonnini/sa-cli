@@ -20,13 +20,16 @@ install = { "sapi/cli/php" = "php" }
 verify = ["sapi/cli/php"]
 
 [test]
+# run-tests.php sui file .phpt. Con --disable-all restano circa 10000 test: motore Zend,
+# linguaggio, standard, pcre, spl, date, json, hash, random, ...
+# Alcuni falliscono o vengono saltati anche in vanilla (rete, locale, ...): il
+# confronto con vanilla li esclude. -w scrive anche l'elenco dei falliti nei risultati.
 [[test.suite]]
 name = "run-tests"
-cwd = "{build}"
-cmd = ["sapi/cli/php", "run-tests.php", "-q", "-j{jobs}", "-w", "{out}/failed.txt",
+cmd = ["sapi/cli/php", "run-tests.php", "-q", "-j{jobs}", "-w", "{out}/run-tests.failed",
     "Zend", "tests", "ext", "sapi/cli"]
 env = { NO_INTERACTION = "1", TEST_PHP_EXECUTABLE = "sapi/cli/php" }
-failures = "php-run-tests"
+failures = "php"
 
 [bench]
 unit = "s"

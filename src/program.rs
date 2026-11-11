@@ -1,23 +1,36 @@
-use crate::common;
-use crate::common::Vars;
+use crate::common::NonEmptyVec;
 use crate::parsers::FailureParser;
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(transparent)]
-pub struct Template(String);
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "Vec<Suite>")]
+pub(crate) struct Suites(NonEmptyVec<Suite>);
 
-impl Template {
-    pub(crate) fn expand(&self, vars: &Vars) -> Result<String> {
-        common::expand(&self.0, vars)
+impl TryFrom<Vec<Suite>> for Suites {
+    type Error = String;
+
+    fn try_from(v: Vec<Suite>) -> Result<Self, String> {
+        let mut seen = BTreeSet::new();
+        for s in &v {
+            if !seen.insert(s.name.as_str()) {
+                return Err(format!("duplicate test suite name \"{}\"", s.name));
+            }
+        }
+        NonEmptyVec::try_from(v)
+            .map(Suites)
+            .map_err(|_| "no test suites".to_string())
     }
 }
 
-pub(crate) type Argv = Vec<String>;
+impl Suites {
+    pub fn list(&self) -> &NonEmptyVec<Suite> {
+        &self.0
+    }
+}
 
 /// Contiene tutte le informazioni necessarie per il processo di build, testing e profiling di un
 /// certo programma.
@@ -68,10 +81,10 @@ pub struct Build {
 #[serde(deny_unknown_fields)]
 pub struct Test {
     #[serde(rename = "suite")]
-    pub suites: Vec<Suite>,
+    pub suites: Suites,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Suite {
     pub name: String,

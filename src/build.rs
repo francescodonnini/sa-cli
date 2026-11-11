@@ -1,7 +1,7 @@
 use crate::common::{
-    Layout, Vars, checkout_only, clone, command, expand, run_logged, run_quiet, vars,
+    Layout, NonEmptyVec, Vars, checkout_only, clone, command, expand, run_logged, run_quiet, vars,
 };
-use crate::conf::{BuildConf, BuildList};
+use crate::conf::BuildConf;
 use crate::program::Program;
 use crate::report::IrReport;
 use crate::toolchain::Toolchain;
@@ -20,7 +20,7 @@ use std::process::Command;
 pub fn run(
     tc: &Toolchain,
     program: &str,
-    builds: &BuildList,
+    builds: &NonEmptyVec<BuildConf>,
     jobs: usize,
     mode: RunMode,
 ) -> Result<()> {
@@ -35,7 +35,7 @@ pub fn run(
             tc.clang.display()
         );
     }
-    for conf in builds.iter() {
+    for &conf in builds.iter() {
         let dirs = tc.layout(&prog.name, conf);
         let vars = vars(tc, &prog, conf, &dirs, jobs);
         let mut commands = build_steps(&prog, &vars, &dirs.build)?;
@@ -124,7 +124,10 @@ fn build_steps(prog: &Program, vars: &Vars, cwd: &Path) -> Result<Vec<Command>> 
 fn prepare(prog: &Program, dirs: &Layout) -> Vec<Command> {
     let mut v = clone(&prog.source.git, &prog.source.git_ref, &dirs.source);
     let mut c = Command::new("rm");
-    c.arg("-rf").arg(&dirs.build).arg(&dirs.prefix).arg(&dirs.meta);
+    c.arg("-rf")
+        .arg(&dirs.build)
+        .arg(&dirs.prefix)
+        .arg(&dirs.meta);
     v.push(c);
 
     if prog.build.copy_source {
@@ -174,14 +177,14 @@ fn install(prog: &Program, dirs: &Layout) -> Result<()> {
 pub struct BuildListParser;
 
 impl TypedValueParser for BuildListParser {
-    type Value = BuildList;
+    type Value = NonEmptyVec<BuildConf>;
 
     fn parse_ref(
         &self,
         cmd: &clap::Command,
         _arg: Option<&clap::Arg>,
         value: &OsStr,
-    ) -> Result<BuildList, clap::Error> {
+    ) -> Result<NonEmptyVec<BuildConf>, clap::Error> {
         let s = value
             .to_str()
             .ok_or_else(|| clap::Error::new(ErrorKind::InvalidUtf8).with_cmd(cmd))?;

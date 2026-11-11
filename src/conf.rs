@@ -1,4 +1,5 @@
-use anyhow::{Error, bail};
+use crate::common::NonEmptyVec;
+use anyhow::{Context, Error, anyhow, bail};
 use clap::builder::PossibleValue;
 use std::cmp::PartialEq;
 use std::fmt;
@@ -114,89 +115,21 @@ impl clap::ValueEnum for BuildConf {
     }
 }
 
-#[derive(Clone)]
-pub struct BuildList {
-    head: BuildConf,
-    tail: Vec<BuildConf>,
-}
-
-impl TryFrom<Vec<BuildConf>> for BuildList {
-    type Error = Error;
-
-    fn try_from(stage_list: Vec<BuildConf>) -> Result<Self, Self::Error> {
-        BuildList::from_slice(&stage_list).ok_or_else(|| anyhow::anyhow!("no configurations"))
-    }
-}
-
-impl BuildList {
-    pub fn every() -> Self {
-        let [head, rest @ ..] = BuildConf::ALL;
-        let mut l = BuildList::single(head);
-        rest.iter().for_each(|&s| l.push(s));
-        l
-    }
-
-    fn from_slice(stages: &[BuildConf]) -> Option<Self> {
-        let (&head, rest) = stages.split_first()?;
-        let mut l = BuildList {
-            head,
-            tail: Vec::new(),
-        };
-        for &st in rest {
-            l.push(st);
-        }
-        Some(l)
-    }
-
-    pub fn single(stage: BuildConf) -> Self {
-        Self {
-            head: stage,
-            tail: vec![],
-        }
-    }
-
-    pub fn contains(&self, stage: BuildConf) -> bool {
-        self.head == stage || self.tail.contains(&stage)
-    }
-
-    pub fn first(&self) -> BuildConf {
-        self.head
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = BuildConf> + '_ {
-        std::iter::once(self.head).chain(self.tail.iter().copied())
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut BuildConf> + '_ {
-        std::iter::once(&mut self.head).chain(self.tail.iter_mut())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        false
-    }
-
-    pub fn len(&self) -> usize {
-        1 + self.tail.len()
-    }
-
-    pub fn push(&mut self, stage: BuildConf) {
-        if !self.contains(stage) {
-            self.tail.push(stage);
-        }
-    }
-}
-
-impl FromStr for BuildList {
+impl FromStr for NonEmptyVec<BuildConf> {
     type Err = Error;
 
-    fn from_str(s: &str) -> Result<Self, Error> {
+    fn from_str(s: &str) -> anyhow::Result<Self> {
         if s.trim() == "all" {
-            return Ok(BuildList::every());
+            return NonEmptyVec::try_from(BuildConf::ALL.to_vec());
         }
-        let stages = s
+        let configurations = s
             .split(',')
-            .map(str::parse)
-            .collect::<Result<Vec<BuildConf>, _>>()?;
-        BuildList::try_from(stages)
+            .map(|p| {
+                let p = p.trim();
+                <BuildConf as clap::ValueEnum>::from_str(p, false)
+                    .map_err(|_| anyhow!("unknown configuration \"{p}\""))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        NonEmptyVec::try_from(configurations).context("no configurations")
     }
 }

@@ -1,4 +1,5 @@
-use crate::conf::BuildList;
+use crate::common::NonEmptyVec;
+use crate::conf::BuildConf;
 use crate::toolchain::Toolchain;
 use anyhow::{Context, Result, bail};
 use std::ffi::CString;
@@ -77,7 +78,7 @@ impl Report {
     }
 }
 
-pub fn run(tc: &Toolchain, builds: &BuildList, quick: bool) -> Result<()> {
+pub fn run(tc: &Toolchain, builds: &NonEmptyVec<BuildConf>, quick: bool) -> Result<()> {
     let report = checks(tc, builds, quick);
     report.print(false);
     if report.failed() {
@@ -86,7 +87,7 @@ pub fn run(tc: &Toolchain, builds: &BuildList, quick: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn require(tc: &Toolchain, builds: &BuildList) -> Result<()> {
+pub fn require(tc: &Toolchain, builds: &NonEmptyVec<BuildConf>) -> Result<()> {
     let report = checks(tc, builds, true);
     if report.failed() {
         report.print(true);
@@ -95,7 +96,7 @@ pub fn require(tc: &Toolchain, builds: &BuildList) -> Result<()> {
     Ok(())
 }
 
-pub fn checks(tc: &Toolchain, builds: &BuildList, _quick: bool) -> Report {
+pub fn checks(tc: &Toolchain, builds: &NonEmptyVec<BuildConf>, _quick: bool) -> Report {
     let mut report = Report::default();
     for tool in ["objdump", "nm", "readelf", "ldd"] {
         report.push(check_version(tool));

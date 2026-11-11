@@ -16,3 +16,13 @@ steps = [
 ]
 install = { "apps/openssl" = "openssl" }
 verify = ["apps/openssl"]
+
+[test]
+# test/recipes/*.t con TAP::Harness (stesso formato di prove). make test usa gli stessi
+# CFLAGS e LDFLAGS della build: se dovesse ricompilare qualcosa (programmi in test/),
+# lo fa con la stessa strumentazione. HARNESS_JOBS: script eseguiti in parallelo.
+[[test.suite]]
+name = "recipes"
+cmd = ["make", "test", "CFLAGS=-Wall -O3 {copt}", "LDFLAGS={ldopt}"]
+env = { HARNESS_JOBS = "{jobs}" }
+failures = "prove"
