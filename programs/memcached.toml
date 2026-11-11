@@ -1,10 +1,12 @@
-# Servono autoconf, automake e libevent-devel (di sistema, non strumentata).
-# configure senza i flag della configurazione; a make si passano CPPFLAGS e
-# LDFLAGS, che automake mette accanto a CFLAGS (che resta quello di configure)
-# e che configure lascia vuoti con la libevent di sistema.
+# Servono autoconf, automake, libevent-devel (di sistema, non strumentata),
+# openssl-devel e perl-IO-Socket-SSL (TLS), wget e accesso alla rete
+# (vendor/fetch.sh scarica Lua e le librerie del proxy a ogni build).
+# configure senza i flag della configurazione. A make i flag del pass arrivano in
+# INCLUDES, una variabile di automake che configure non usa: CPPFLAGS contiene
+# già i percorsi di vendor/ (Lua e liburing del proxy) e non va sovrascritto.
+# LDFLAGS invece configure lo lascia vuoto (le librerie stanno in LIBS).
 # --disable-coverage: altrimenti memcached-debug viene linkato con gcov.
-# memcached-debug, testapp, sizes e timedrun servono a make test.
-# openssl-devel e perl-IO-Socket-SSL servono per eseguire i test che usano openssl.
+# memcached-debug, testapp, sizes e timedrun servono ai test.
 [source]
 git = "https://github.com/memcached/memcached"
 ref = "1.6.45"
@@ -14,8 +16,8 @@ copy_source = true
 steps = [
     ["sh", "-c", "cd vendor && ./fetch.sh"],
     ["./autogen.sh"],
-    ["./configure", "CC={cc}", "--disable-coverage", "--enable-proxy"],
-    ["make", "-j{jobs}", "CPPFLAGS={copt}", "LDFLAGS={ldopt}",
+    ["./configure", "CC={cc}", "--disable-coverage", "--enable-proxy", "--enable-tls"],
+    ["make", "-j{jobs}", "INCLUDES={copt}", "LDFLAGS={ldopt}",
         "memcached", "memcached-debug", "testapp", "sizes", "timedrun"],
 ]
 install = { "memcached" = "memcached" }
@@ -39,7 +41,9 @@ name = "t"
 cmd = ["prove", "t"]
 failures = "prove"
 
-# gli stessi test su TLS, più ssl_*.t (certificati di prova in t/)
+# gli stessi test su TLS, più ssl_*.t (certificati di prova in t/).
+# Senza --enable-tls in configure, SSL_TEST viene ignorata e questa suite
+# ripete t in chiaro.
 [[test.suite]]
 name = "t-tls"
 cmd = ["prove", "t"]
