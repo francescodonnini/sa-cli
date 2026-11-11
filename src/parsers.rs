@@ -133,14 +133,24 @@ fn cpython(log: &str) -> Outcome {
             for kv in rest.split_whitespace() {
                 match kv.split_once('=') {
                     Some(("run", v)) => {
-                        total = v.split('/').nth(1).and_then(|n| n.replace(',', "").parse().ok())
+                        total = v
+                            .split('/')
+                            .nth(1)
+                            .and_then(|n| n.replace(',', "").parse().ok())
                     }
                     Some(("failed", v)) => failed_n = v.replace(',', "").parse().unwrap_or(0),
                     _ => {}
                 }
             }
-        } else if let Some(n) = t.strip_suffix(" tests OK.").or_else(|| t.strip_suffix(" test OK.")) {
-            ok = n.trim_start_matches("All ").replace(',', "").parse().unwrap_or(0);
+        } else if let Some(n) = t
+            .strip_suffix(" tests OK.")
+            .or_else(|| t.strip_suffix(" test OK."))
+        {
+            ok = n
+                .trim_start_matches("All ")
+                .replace(',', "")
+                .parse()
+                .unwrap_or(0);
         } else if t.ends_with(" failed:") && t.starts_with(|c: char| c.is_ascii_digit()) {
             in_list = true;
         }
@@ -154,7 +164,14 @@ fn cpython(log: &str) -> Outcome {
     failed.sort();
     failed.dedup();
     let skipped = total.saturating_sub(ok + failed_n);
-    Outcome { counts: Some(Counts { total, failed: failed_n, skipped }), failed }
+    Outcome {
+        counts: Some(Counts {
+            total,
+            failed: failed_n,
+            skipped,
+        }),
+        failed,
+    }
 }
 
 /// Catch2 (duckdb unittest): "All tests passed (A assertions in N test cases)" oppure
@@ -179,13 +196,25 @@ fn catch2(log: &str) -> Outcome {
         if let Some(rest) = l.strip_prefix("All tests passed") {
             // "(A assertions in N test cases)": N è il secondo numero
             if let Some(&n) = nums(rest).get(1) {
-                counts = Some(Counts { total: n, failed: 0, skipped: 0 });
+                counts = Some(Counts {
+                    total: n,
+                    failed: 0,
+                    skipped: 0,
+                });
             }
         } else if let Some(rest) = l.strip_prefix("test cases:") {
             let n = nums(rest);
             let total = n.first().copied().unwrap_or(0);
-            let f = rest.contains("failed").then(|| n.last().copied()).flatten().unwrap_or(0);
-            counts = Some(Counts { total, failed: f, skipped: 0 });
+            let f = rest
+                .contains("failed")
+                .then(|| n.last().copied())
+                .flatten()
+                .unwrap_or(0);
+            counts = Some(Counts {
+                total,
+                failed: f,
+                skipped: 0,
+            });
         }
     }
     let Some(c) = counts else {
@@ -196,7 +225,10 @@ fn catch2(log: &str) -> Outcome {
     };
     failed.sort();
     failed.dedup();
-    Outcome { counts: Some(c), failed }
+    Outcome {
+        counts: Some(c),
+        failed,
+    }
 }
 
 /// `testrunner.tcl` di SQLite: "E errors out of T tests in 00:35 on ...". I dettagli dei

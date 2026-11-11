@@ -1,4 +1,3 @@
-use std::io::Write;
 use crate::common::{NonEmptyVec, clone, command, expand, repo_dir, run_quiet, spawn_logged, vars};
 use crate::conf::BuildConf;
 use crate::parsers::Outcome;
@@ -9,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Instant;
@@ -69,7 +69,8 @@ pub fn run(
         let path = out.join("output.txt");
         Some(File::create(&path).with_context(|| format!("cannot create {}", path.display()))?)
     });
-    let mut summary = String::from("conf\tsuite\tstatus\tpassed\ttotal\tskipped\tfailed\tseconds\n");
+    let mut summary =
+        String::from("conf\tsuite\tstatus\tpassed\ttotal\tskipped\tfailed\tseconds\n");
     let mut failed: BTreeMap<BuildConf, BTreeSet<String>> = BTreeMap::new();
     for &build in aug.iter() {
         let dirs = tc.layout(&prog.name, build);
@@ -117,7 +118,11 @@ pub fn run(
                 None => String::new(),
             };
             let (passed, total, skipped) = match o.counts {
-                Some(c) => (c.passed().to_string(), c.total.to_string(), c.skipped.to_string()),
+                Some(c) => (
+                    c.passed().to_string(),
+                    c.total.to_string(),
+                    c.skipped.to_string(),
+                ),
                 None => Default::default(),
             };
             if o.failed.is_empty() {
@@ -178,7 +183,11 @@ fn select<'a>(
             known.join(", ")
         );
     }
-    NonEmptyVec::try_from(all.iter().filter(|s| names.contains(&s.name)).collect::<Vec<_>>())
+    NonEmptyVec::try_from(
+        all.iter()
+            .filter(|s| names.contains(&s.name))
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn outcome(suite: &Suite, status: ExitStatus, log: &Path) -> Result<Outcome> {
