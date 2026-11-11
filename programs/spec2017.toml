@@ -11,15 +11,41 @@ path = "~/spec2017"
 
 [build]
 steps = [
-    ["cp", "{assets}/btp.cfg", "{src}/config/btp.cfg"],
-    ["sh", "-c", "cd {src} && . ./shrc && runcpu --config=btp --action=build --rebuild --label={conf} --output_root={build} $BTP_BENCHMARKS"],
+    # un config per configurazione: runcpu vi aggiunge le impronte della build (__HASH__),
+    # che il test con --nobuild controlla; un file condiviso le perderebbe a ogni build
+    ["cp", "{assets}/btp.cfg", "{src}/config/btp-{conf}.cfg"],
+    ["sh", "-c", "cd {src} && . ./shrc && runcpu --config=btp-{conf} --action=build --rebuild --label={conf} --output_root={build} $BTP_BENCHMARKS"],
 ]
 env = { BTP_CC = "{cc}", BTP_CXX = "{cxx}", BTP_COPT = "{copt}", BTP_LDOPT = "{ldopt}", BTP_JOBS = "{jobs}", BTP_BENCHMARKS = "500.perlbench_r 502.gcc_r 505.mcf_r 520.omnetpp_r 523.xalancbmk_r 525.x264_r 531.deepsjeng_r 541.leela_r 557.xz_r 508.namd_r 510.parest_r 511.povray_r 519.lbm_r 526.blender_r 538.imagick_r 544.nab_r" }
+# Un binario per benchmark, in output_root (la build): <nome>_base.<label>. Gli strumenti
+# di validazione nella stessa cartella (imagevalidate_*, ldecod_r) non vengono verificati.
+# Per 525.x264_r si controlla l'encoder (nella stessa cartella ci sono anche strumenti di supporto).
+# Soglie basse solo per i benchmark con pochissime funzioni: da rivedere dopo la build
+# di func (conteggio dei riferimenti a __ss_shadow_offset con objdump).
+verify = [
+    "benchspec/CPU/500.perlbench_r/exe/perlbench_r_base.{conf}",
+    "benchspec/CPU/502.gcc_r/exe/cpugcc_r_base.{conf}",
+    { path = "benchspec/CPU/505.mcf_r/exe/mcf_r_base.{conf}", min_refs = 10 },
+    "benchspec/CPU/520.omnetpp_r/exe/omnetpp_r_base.{conf}",
+    "benchspec/CPU/523.xalancbmk_r/exe/cpuxalan_r_base.{conf}",
+    "benchspec/CPU/525.x264_r/exe/x264_r_base.{conf}",
+    "benchspec/CPU/531.deepsjeng_r/exe/deepsjeng_r_base.{conf}",
+    "benchspec/CPU/541.leela_r/exe/leela_r_base.{conf}",
+    "benchspec/CPU/557.xz_r/exe/xz_r_base.{conf}",
+    "benchspec/CPU/508.namd_r/exe/namd_r_base.{conf}",
+    "benchspec/CPU/510.parest_r/exe/parest_r_base.{conf}",
+    "benchspec/CPU/511.povray_r/exe/povray_r_base.{conf}",
+    { path = "benchspec/CPU/519.lbm_r/exe/lbm_r_base.{conf}", min_refs = 5 },
+    "benchspec/CPU/526.blender_r/exe/blender_r_base.{conf}",
+    "benchspec/CPU/538.imagick_r/exe/imagick_r_base.{conf}",
+    "benchspec/CPU/544.nab_r/exe/nab_r_base.{conf}",
+]
 
 [test]
 # input "test": piccoli, ma runcpu ne valida comunque l'output. --nobuild: si usano i
 # binari della build; l'ambiente deve essere identico, altrimenti runcpu non li riconosce.
 [[test.suite]]
 name = "test-size"
-cmd = ["sh", "-c", "ulimit -s unlimited; cd {src} && . ./shrc && runcpu --config=btp --action=run --nobuild --size=test --iterations=1 --label={conf} --output_root={build} $BTP_BENCHMARKS"]
+cmd = ["sh", "-c", "ulimit -s unlimited; cd {src} && . ./shrc && runcpu --config=btp-{conf} --action=run --nobuild --size=test --iterations=1 --label={conf} --output_root={build} $BTP_BENCHMARKS"]
 env = { BTP_CC = "{cc}", BTP_CXX = "{cxx}", BTP_COPT = "{copt}", BTP_LDOPT = "{ldopt}", BTP_JOBS = "{jobs}", BTP_BENCHMARKS = "500.perlbench_r 502.gcc_r 505.mcf_r 520.omnetpp_r 523.xalancbmk_r 525.x264_r 531.deepsjeng_r 541.leela_r 557.xz_r 508.namd_r 510.parest_r 511.povray_r 519.lbm_r 526.blender_r 538.imagick_r 544.nab_r" }
+failures = "spec"

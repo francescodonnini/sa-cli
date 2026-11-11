@@ -10,7 +10,7 @@ mod toolchain;
 mod verify;
 
 use crate::build::BuildListParser;
-use crate::common::NonEmptyVec;
+use crate::common::NonEmptySet;
 use crate::conf::BuildConf;
 use crate::toolchain::Toolchain;
 use anyhow::{Result, bail};
@@ -58,19 +58,19 @@ enum Command {
     Bench {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
-        builds: NonEmptyVec<BuildConf>,
+        builds: NonEmptySet<BuildConf>,
     },
     #[command(arg_required_else_help = true)]
     Build {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
-        builds: NonEmptyVec<BuildConf>,
+        builds: NonEmptySet<BuildConf>,
         #[arg(short, long, default_value_t = default_jobs())]
         jobs: usize,
     },
     Doctor {
         #[arg(value_name = "CONFS", default_value = "all", value_parser = BuildListParser)]
-        builds: NonEmptyVec<BuildConf>,
+        builds: NonEmptySet<BuildConf>,
     },
     Init {
         #[arg(long)]
@@ -85,9 +85,9 @@ enum Command {
     Test {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
-        builds: NonEmptyVec<BuildConf>,
+        builds: NonEmptySet<BuildConf>,
         #[arg(short, long = "suite", value_name = "SUITES", value_delimiter = ',')]
-        suites: Option<NonEmptyVec<String>>,
+        suites: Option<NonEmptySet<String>>,
         #[arg(short, long, default_value_t = default_jobs())]
         jobs: usize,
     },

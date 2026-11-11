@@ -1,6 +1,6 @@
-use crate::common::{expand_home, NonEmptyVec};
+use crate::common::{NonEmptySet, expand_home};
 use crate::parsers::FailureParser;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "Vec<Suite>")]
-pub(crate) struct Suites(NonEmptyVec<Suite>);
+pub(crate) struct Suites(NonEmptySet<Suite>);
 
 impl TryFrom<Vec<Suite>> for Suites {
     type Error = String;
@@ -20,14 +20,14 @@ impl TryFrom<Vec<Suite>> for Suites {
                 return Err(format!("duplicate test suite name \"{}\"", s.name));
             }
         }
-        NonEmptyVec::try_from(v)
+        NonEmptySet::try_from(v)
             .map(Suites)
             .map_err(|_| "no test suites".to_string())
     }
 }
 
 impl Suites {
-    pub fn list(&self) -> &NonEmptyVec<Suite> {
+    pub fn list(&self) -> &NonEmptySet<Suite> {
         &self.0
     }
 }
@@ -54,13 +54,15 @@ pub struct Program {
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub enum  Source {
+pub enum Source {
     Git {
         git: String,
         #[serde(rename = "ref")]
         git_ref: String,
     },
-    Path { path: PathBuf },
+    Path {
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,15 +123,17 @@ impl Program {
             toml::from_str(&text).with_context(|| format!("invalid {}", file.display()))?;
         program.name = name.to_string();
         if let Source::Path { path } = &mut program.source {
-            *path = expand_home(path)
-                .with_context(|| format!("{}: source.path", path.display()))?;
+            *path =
+                expand_home(path).with_context(|| format!("{}: source.path", path.display()))?;
             if !path.is_absolute() {
-                bail!("source.path must be absolute or start with ~");
+                bail!(
+                    "{}: source.path must be absolute or start with ~",
+                    file.display()
+                );
             }
             if program.build.copy_source {
                 bail!("{}: copy_source requires a git source", file.display());
             }
-
         }
         Ok(program)
     }

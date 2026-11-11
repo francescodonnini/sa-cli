@@ -1,4 +1,4 @@
-use crate::common::NonEmptyVec;
+use crate::common::NonEmptySet;
 use anyhow::{Context, Error, anyhow, bail};
 use clap::builder::PossibleValue;
 use std::cmp::PartialEq;
@@ -115,12 +115,12 @@ impl clap::ValueEnum for BuildConf {
     }
 }
 
-impl FromStr for NonEmptyVec<BuildConf> {
+impl FromStr for NonEmptySet<BuildConf> {
     type Err = Error;
 
     fn from_str(s: &str) -> anyhow::Result<Self> {
         if s.trim() == "all" {
-            return NonEmptyVec::try_from(BuildConf::ALL.to_vec());
+            return NonEmptySet::try_from(BuildConf::ALL.to_vec());
         }
         let configurations = s
             .split(',')
@@ -130,6 +130,6 @@ impl FromStr for NonEmptyVec<BuildConf> {
                     .map_err(|_| anyhow!("unknown configuration \"{p}\""))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        NonEmptyVec::try_from(configurations).context("no configurations")
+        NonEmptySet::try_from(configurations).context("no configurations")
     }
 }

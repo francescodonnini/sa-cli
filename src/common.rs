@@ -13,12 +13,12 @@ use std::str::FromStr;
 pub(crate) type Vars = BTreeMap<String, String>;
 
 #[derive(Clone, Debug)]
-pub struct NonEmptyVec<T> {
+pub struct NonEmptySet<T> {
     head: T,
     tail: Vec<T>,
 }
 
-impl<T: PartialEq> TryFrom<Vec<T>> for NonEmptyVec<T> {
+impl<T: PartialEq> TryFrom<Vec<T>> for NonEmptySet<T> {
     type Error = Error;
 
     fn try_from(items: Vec<T>) -> std::result::Result<Self, Self::Error> {
@@ -30,7 +30,7 @@ impl<T: PartialEq> TryFrom<Vec<T>> for NonEmptyVec<T> {
     }
 }
 
-impl<T> NonEmptyVec<T> {
+impl<T> NonEmptySet<T> {
     pub fn single(one: T) -> Self {
         Self {
             head: one,
@@ -46,10 +46,6 @@ impl<T> NonEmptyVec<T> {
         std::iter::once(&self.head).chain(self.tail.iter())
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> + '_ {
-        std::iter::once(&mut self.head).chain(self.tail.iter_mut())
-    }
-
     pub fn is_empty(&self) -> bool {
         false
     }
@@ -59,17 +55,19 @@ impl<T> NonEmptyVec<T> {
     }
 }
 
-impl<T: PartialEq> NonEmptyVec<T> {
+impl<T: PartialEq> NonEmptySet<T> {
     pub fn contains(&self, elem: &T) -> bool {
         &self.head == elem || self.tail.contains(elem)
     }
 
     pub fn push(&mut self, elem: T) {
-        self.tail.push(elem);
+        if !self.contains(&elem) {
+            self.tail.push(elem);
+        }
     }
 }
 
-impl<'a, T> IntoIterator for &'a NonEmptyVec<T> {
+impl<'a, T> IntoIterator for &'a NonEmptySet<T> {
     type Item = &'a T;
     type IntoIter = std::iter::Chain<std::iter::Once<&'a T>, std::slice::Iter<'a, T>>;
 
@@ -78,7 +76,7 @@ impl<'a, T> IntoIterator for &'a NonEmptyVec<T> {
     }
 }
 
-impl FromStr for NonEmptyVec<String> {
+impl FromStr for NonEmptySet<String> {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, String> {
@@ -90,7 +88,7 @@ impl FromStr for NonEmptyVec<String> {
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
         // split restituisce sempre almeno un pezzo, quindi names non è mai vuoto
-        NonEmptyVec::try_from(names).map_err(|e| e.to_string())
+        NonEmptySet::try_from(names).map_err(|e| e.to_string())
     }
 }
 
@@ -233,6 +231,11 @@ pub(crate) fn vars(
 ) -> Vars {
     let mut v = Vars::from([
         ("cc".into(), tc.clang.display().to_string()),
+        ("conf".into(), conf.name().to_string()),
+        (
+            "assets".into(),
+            tc.programs.join(&program.name).display().to_string(),
+        ),
         ("copt".into(), tc.compile_flags(conf).join(" ")),
         ("ldopt".into(), tc.link_flags(conf).join(" ")),
         ("jobs".into(), jobs.to_string()),

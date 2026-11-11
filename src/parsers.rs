@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::cmp::PartialEq;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -16,6 +17,7 @@ pub enum FailureParser {
     /// Riepilogo di prove (nginx)
     Prove,
     Redis,
+    Spec,
     Sqlite,
     /// Output TAP (pg_regress)
     Tap,
@@ -57,6 +59,7 @@ impl FailureParser {
             FailureParser::Php => return php(log),
             FailureParser::Prove => (false, true, false),
             FailureParser::Redis => return redis(log),
+            FailureParser::Spec => return spec(log),
             FailureParser::Sqlite => return sqlite(log),
             FailureParser::Tap => (true, false, false),
         };
@@ -511,15 +514,138 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+fn spec(log: &str) -> Outcome {
+    let mut running = BTreeSet::new();
+    let mut ok = BTreeSet::new();
+    let mut build_failed = BTreeSet::new();
+    let mut nothing_to_run = false;
+    for l in log.lines() {
+        let t = l.trim_start();
+        if let Some(rest) = t.strip_prefix("Running ") {
+            if let Some(name) = spec_name(rest) {
+                running.insert(name);
+            }
+        } else if let Some(rest) = t.strip_prefix("Success: ") {
+            for s in rest.split_whitespace() {
+                if let Some((_, name)) = s.split_once('x') {
+                    ok.insert(String::from(name));
+                }
+            }
+        } else if let Some((_, list)) = t
+            .strip_prefix("Build errors for ")
+            .and_then(|r| r.split_once(": "))
+        {
+            // "500.perlbench_r(base; nobuild), 502.gcc_r(base; nobuild)" oppure "None"
+            if list.trim() != "None" {
+                for item in list.split(", ") {
+                    let name = item.split('(').next().unwrap_or(item).trim();
+                    build_failed.insert(String::from(name));
+                }
+            }
+        } else if t.starts_with("NOTICE: Nothing to run!") {
+            nothing_to_run = true;
+        }
+    }
+    let mut failed = running.difference(&ok).cloned().collect::<Vec<_>>();
+    failed.extend(build_failed.iter().map(|b| format!("{b} (build)")));
+    if nothing_to_run {
+        failed.push(String::from("(nothing to run)"));
+    }
+    if running.is_empty() && failed.is_empty() {
+        failed.push(String::from("(no summary: runcpu did not run anything)"));
+    }
+    let total = running.union(&build_failed).count();
+    let n_failed = running.difference(&ok).count() + build_failed.len();
+    Outcome {
+        counts: Some(Counts {
+            total,
+            failed: n_failed,
+            skipped: 0,
+        }),
+        failed,
+    }
+}
+
+fn spec_name(s: &str) -> Option<String> {
+    let mut name = String::new();
+    let mut n = 0;
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            name.push(c);
+            n += 1;
+        } else {
+            break;
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    for c in s[n..].chars() {
+        if c.is_whitespace() {
+            return Some(name);
+        } else {
+            name.push(c);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn spec_outcomes() {
+        let ok = "\
+  Running 508.namd_r test base vanilla (1 copy) [2026-11-11 23:43:50]
+  Running 519.lbm_r test base vanilla (1 copy) [2026-11-11 23:43:55]
+Success: 1x508.namd_r 1x519.lbm_r
+";
+        let o = FailureParser::Spec.parse(ok);
+        assert!(o.failed.is_empty());
+        assert_eq!(
+            o.counts,
+            Some(Counts {
+                total: 2,
+                failed: 0,
+                skipped: 0
+            })
+        );
+
+        let one_failed = "\
+  Running 508.namd_r test base func (1 copy) [2026-11-11 23:43:50]
+  Running 519.lbm_r test base func (1 copy) [2026-11-11 23:43:55]
+Success: 1x508.namd_r
+";
+        assert_eq!(FailureParser::Spec.parse(one_failed).failed, ["519.lbm_r"]);
+
+        let not_built = "\
+Build errors for intrate: 500.perlbench_r(base; nobuild), 502.gcc_r(base; nobuild)
+NOTICE: Nothing to run!  No results will be generated.
+";
+        let o = FailureParser::Spec.parse(not_built);
+        assert_eq!(
+            o.failed,
+            [
+                "500.perlbench_r (build)",
+                "502.gcc_r (build)",
+                "(nothing to run)"
+            ]
+        );
+    }
+
+    #[test]
     fn catch2_summary_with_skipped() {
         let log = "test cases:    7848 |    7823 passed | 25 failed | 162 skipped\n";
         let o = FailureParser::Catch2.parse(log);
-        assert_eq!(o.counts, Some(Counts { total: 7848, failed: 25, skipped: 162 }));
+        assert_eq!(
+            o.counts,
+            Some(Counts {
+                total: 7848,
+                failed: 25,
+                skipped: 162
+            })
+        );
     }
 
     #[test]

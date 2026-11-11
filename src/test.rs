@@ -1,4 +1,4 @@
-use crate::common::{NonEmptyVec, clone, command, expand, repo_dir, run_quiet, spawn_logged, vars};
+use crate::common::{NonEmptySet, clone, command, expand, repo_dir, run_quiet, spawn_logged, vars};
 use crate::conf::BuildConf;
 use crate::parsers::Outcome;
 use crate::program::{Program, Suite, Suites};
@@ -29,16 +29,14 @@ impl Tee {
 pub fn run(
     tc: &Toolchain,
     program: &str,
-    builds: &NonEmptyVec<BuildConf>,
-    suites: Option<&NonEmptyVec<String>>,
+    builds: &NonEmptySet<BuildConf>,
+    suites: Option<&NonEmptySet<String>>,
     jobs: usize,
     mode: RunMode,
 ) -> Result<()> {
-    let mut aug = NonEmptyVec::single(BuildConf::Vanilla);
+    let mut aug = NonEmptySet::single(BuildConf::Vanilla);
     builds.into_iter().for_each(|b| {
-        if !aug.contains(b) {
-            aug.push(*b)
-        }
+        aug.push(*b);
     });
     if mode != RunMode::DryRun {
         doctor::require(tc, &aug)?;
@@ -164,11 +162,11 @@ pub fn run(
 
 fn select<'a>(
     all: &'a Suites,
-    names: Option<&NonEmptyVec<String>>,
-) -> Result<NonEmptyVec<&'a Suite>> {
+    names: Option<&NonEmptySet<String>>,
+) -> Result<NonEmptySet<&'a Suite>> {
     let all = all.list();
     let Some(names) = names else {
-        return NonEmptyVec::try_from(all.iter().collect::<Vec<_>>());
+        return NonEmptySet::try_from(all.iter().collect::<Vec<_>>());
     };
     let unknown: Vec<&str> = names
         .iter()
@@ -183,7 +181,7 @@ fn select<'a>(
             known.join(", ")
         );
     }
-    NonEmptyVec::try_from(
+    NonEmptySet::try_from(
         all.iter()
             .filter(|s| names.contains(&s.name))
             .collect::<Vec<_>>(),

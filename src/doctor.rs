@@ -1,4 +1,4 @@
-use crate::common::NonEmptyVec;
+use crate::common::NonEmptySet;
 use crate::conf::BuildConf;
 use crate::toolchain::Toolchain;
 use anyhow::{Context, Result, bail};
@@ -78,7 +78,7 @@ impl Report {
     }
 }
 
-pub fn run(tc: &Toolchain, builds: &NonEmptyVec<BuildConf>, quick: bool) -> Result<()> {
+pub fn run(tc: &Toolchain, builds: &NonEmptySet<BuildConf>, quick: bool) -> Result<()> {
     let report = checks(tc, builds, quick);
     report.print(false);
     if report.failed() {
@@ -87,7 +87,7 @@ pub fn run(tc: &Toolchain, builds: &NonEmptyVec<BuildConf>, quick: bool) -> Resu
     Ok(())
 }
 
-pub fn require(tc: &Toolchain, builds: &NonEmptyVec<BuildConf>) -> Result<()> {
+pub fn require(tc: &Toolchain, builds: &NonEmptySet<BuildConf>) -> Result<()> {
     let report = checks(tc, builds, true);
     if report.failed() {
         report.print(true);
@@ -96,7 +96,7 @@ pub fn require(tc: &Toolchain, builds: &NonEmptyVec<BuildConf>) -> Result<()> {
     Ok(())
 }
 
-pub fn checks(tc: &Toolchain, builds: &NonEmptyVec<BuildConf>, _quick: bool) -> Report {
+pub fn checks(tc: &Toolchain, builds: &NonEmptySet<BuildConf>, _quick: bool) -> Report {
     let mut report = Report::default();
     for tool in ["objdump", "nm", "readelf", "ldd"] {
         report.push(check_version(tool));

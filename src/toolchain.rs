@@ -1,9 +1,9 @@
 use crate::conf::BuildConf;
+use crate::program::{Program, Source};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io};
-use crate::program::{Program, Source};
 
 const TEMPLATE: &str = include_str!("toolchain.toml");
 

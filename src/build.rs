@@ -1,5 +1,5 @@
 use crate::common::{
-    Layout, NonEmptyVec, Vars, checkout_only, clone, command, expand, run_logged, run_quiet, vars,
+    Layout, NonEmptySet, Vars, checkout_only, clone, command, expand, run_logged, run_quiet, vars,
 };
 use crate::conf::BuildConf;
 use crate::program::{Program, Source};
@@ -20,7 +20,7 @@ use std::process::Command;
 pub fn run(
     tc: &Toolchain,
     program: &str,
-    builds: &NonEmptyVec<BuildConf>,
+    builds: &NonEmptySet<BuildConf>,
     jobs: usize,
     mode: RunMode,
 ) -> Result<()> {
@@ -187,14 +187,14 @@ fn install(prog: &Program, dirs: &Layout) -> Result<()> {
 pub struct BuildListParser;
 
 impl TypedValueParser for BuildListParser {
-    type Value = NonEmptyVec<BuildConf>;
+    type Value = NonEmptySet<BuildConf>;
 
     fn parse_ref(
         &self,
         cmd: &clap::Command,
         _arg: Option<&clap::Arg>,
         value: &OsStr,
-    ) -> Result<NonEmptyVec<BuildConf>, clap::Error> {
+    ) -> Result<NonEmptySet<BuildConf>, clap::Error> {
         let s = value
             .to_str()
             .ok_or_else(|| clap::Error::new(ErrorKind::InvalidUtf8).with_cmd(cmd))?;
