@@ -1,17 +1,31 @@
-# Build fuori dai sorgenti. Dal repository servono bison e flex.
-# configure senza i flag della configurazione (esegue programmi di prova);
-# COPT e LDFLAGS_EX sono le variabili di Postgres per aggiungere flag.
-# make install esegue programmi appena compilati (zic): stessi flag.
+# Servono tcl (tclsh 8.5+) per i test. Solo redis-server è strumentato:
+# REDIS_CFLAGS/REDIS_LDFLAGS valgono per il codice di Redis ma non per deps/
+# (jemalloc, lua, hiredis), che restano senza flag.
+# Fase 1: redis-server strumentato, messo da parte. Fase 2: tutto senza flag
+# (il cambio di flag fa scattare un distclean automatico nel Makefile di Redis),
+# poi redis-server strumentato rimesso al suo posto. redis-cli e redis-benchmark
+# restano non strumentati: redis-benchmark è il client del benchmark.
 [source]
-git = "https://github.com/postgres/postgres"
-ref = "REL_18_6"
+git = "https://github.com/redis/redis"
+ref = "8.8.0"
 
 [build]
-copy_source = false
+copy_source = true
 steps = [
-    ["{src}/configure", "--prefix={prefix}", "--without-icu", "--without-readline",
-        "--without-zlib", "CC={cc}", "CFLAGS=-O2"],
-    ["make", "-s", "-j{jobs}", "COPT={copt}", "LDFLAGS_EX={ldopt}"],
-    ["make", "-s", "install", "COPT={copt}", "LDFLAGS_EX={ldopt}"],
+    ["make", "-j{jobs}", "CC={cc}", "OPTIMIZATION=-O2", "BUILD_TLS=no",
+        "REDIS_CFLAGS={copt}", "REDIS_LDFLAGS={ldopt}", "redis-server"],
+    ["cp", "src/redis-server", "redis-server.protected"],
+    ["make", "-j{jobs}", "CC={cc}", "OPTIMIZATION=-O2", "BUILD_TLS=no"],
+    ["cp", "redis-server.protected", "src/redis-server"],
 ]
-verify = [{ path = "{prefix}/bin/postgres", min_refs = 1000 }]
+install = { "src/redis-server" = "redis-server", "src/redis-cli" = "redis-cli",
+    "src/redis-benchmark" = "redis-benchmark" }
+verify = ["src/redis-server"]
+
+[test]
+# runtest avvia src/redis-server della build per ogni gruppo di test.
+# --dump-logs stampa il log del server quando un test fallisce.
+[[test.suite]]
+name = "runtest"
+cmd = ["./runtest", "--clients", "{jobs}", "--dump-logs"]
+failures = "redis"

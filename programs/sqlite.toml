@@ -18,3 +18,10 @@ steps = [
 ]
 install = { "speedtest1" = "speedtest1", "kvtest" = "kvtest", "wordcount" = "wordcount" }
 verify = ["speedtest1", "kvtest", "wordcount", "testfixture"]
+
+[test]
+# testrunner.tcl distribuisce gli script Tcl di test/ su più processi testfixture.
+# Scrive testrunner.log e testrunner.db nella cartella corrente (la build).
+[[test.suite]]
+name = "veryquick"
+cmd = ["./testfixture", "{src}/test/testrunner.tcl", "--jobs", "{jobs}", "veryquick"]

@@ -1,6 +1,6 @@
 use crate::common::{clone, command, expand, repo_dir, run_quiet, spawn_logged, vars};
 use crate::conf::{BuildConf, BuildList};
-use crate::parsers::{pg, prove, tap, FailureParser};
+use crate::parsers::Outcome;
 use crate::program::{Program, Suite};
 use crate::toolchain::Toolchain;
 use crate::{RunMode, doctor};
@@ -78,19 +78,26 @@ pub fn run(
             let log = conf_out.join(format!("{}.log", suite.name));
             let t0 = Instant::now();
             let status = spawn_logged(&mut cmd, &log, mode)?;
-            let f = failures(suite, status, &log)?;
+            let o = outcome(suite, status, &log)?;
             let secs = t0.elapsed().as_secs_f64();
-            if f.is_empty() {
-                println!("{build} {}: ok ({secs:.1} s)", suite.name);
+            let counts = match o.counts {
+                Some(c) if c.skipped > 0 => {
+                    format!(", {}/{} passed, {} skipped", c.passed(), c.total, c.skipped)
+                }
+                Some(c) => format!(", {}/{} passed", c.passed(), c.total),
+                None => String::new(),
+            };
+            if o.failed.is_empty() {
+                println!("{build} {}: ok{counts} ({secs:.1} s)", suite.name);
             } else {
                 println!(
-                    "{build} {}: {} failed ({secs:.1} s), log: {}",
+                    "{build} {}: {} failed{counts} ({secs:.1} s), log: {}",
                     suite.name,
-                    f.len(),
+                    o.failed.len(),
                     log.display()
                 );
             }
-            names.extend(f.into_iter().map(|n| format!("{}: {n}", suite.name)));
+            names.extend(o.failed.into_iter().map(|n| format!("{}: {n}", suite.name)));
         }
 
         if mode != RunMode::DryRun {
@@ -107,17 +114,13 @@ pub fn run(
     Ok(())
 }
 
-fn failures(suite: &Suite, status: ExitStatus, log: &Path) -> Result<Vec<String>> {
-    let mut f = match suite.failures {
-        FailureParser::ExitCode => Vec::new(),
-        FailureParser::Pg => pg(&String::from_utf8_lossy(&fs::read(log)?)),
-        FailureParser::Prove => prove(&String::from_utf8_lossy(&fs::read(log)?)),
-        FailureParser::Tap => tap(&String::from_utf8_lossy(&fs::read(log)?)),
-    };
-    if !status.success() && f.is_empty() {
-        f.push(format!("({status})"));
+fn outcome(suite: &Suite, status: ExitStatus, log: &Path) -> Result<Outcome> {
+    let text = fs::read(log).with_context(|| format!("cannot read {}", log.display()))?;
+    let mut o = suite.failures.parse(&String::from_utf8_lossy(&text));
+    if !status.success() && o.failed.is_empty() {
+        o.failed.push(format!("({status})"));
     }
-    Ok(f)
+    Ok(o)
 }
 
 fn compare(failed: &BTreeMap<BuildConf, BTreeSet<String>>) {

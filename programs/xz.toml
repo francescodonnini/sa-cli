@@ -17,3 +17,11 @@ steps = [
 ]
 install = { "build/xz" = "xz" }
 verify = ["build/xz"]
+
+[test]
+# test_* di liblzma (C) e test_files/test_compress (script che usano xz e xzdec)
+[[test.suite]]
+name = "ctest"
+cwd = "{build}/build"
+cmd = ["ctest", "-j{jobs}", "--output-on-failure"]
+failures = "ctest"

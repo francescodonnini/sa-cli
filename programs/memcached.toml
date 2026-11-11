@@ -18,3 +18,21 @@ steps = [
 ]
 install = { "memcached" = "memcached" }
 verify = ["memcached", "memcached-debug"]
+
+[test]
+# controlla la dimensione delle strutture interne
+[[test.suite]]
+name = "sizes"
+cmd = ["./sizes"]
+
+# test unitari del codice del server (output TAP)
+[[test.suite]]
+name = "testapp"
+cmd = ["./testapp"]
+failures = "tap"
+
+# test di protocollo: ogni script avvia ./memcached-debug dalla cartella corrente
+[[test.suite]]
+name = "t"
+cmd = ["prove", "t"]
+failures = "prove"
