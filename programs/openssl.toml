@@ -24,5 +24,8 @@ verify = ["apps/openssl"]
 [[test.suite]]
 name = "recipes"
 cmd = ["make", "test", "CFLAGS=-Wall -O3 {copt}", "LDFLAGS={ldopt}"]
-env = { HARNESS_JOBS = "{jobs}" }
+# test_async e test_speed (con -async_jobs) avviano job asincroni su stack allocati con
+# malloc (crypto/async/arch/async_posix.c): fuori dall'area, quindi in func e full
+# terminano al primo prologo. Limite noto: stack forniti dal programma senza MAP_STACK.
+env = { HARNESS_JOBS = "{jobs}", TESTS = "-test_async -test_speed" }
 failures = "prove"
