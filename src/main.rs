@@ -86,7 +86,7 @@ enum Command {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
         builds: NonEmptySet<BuildConf>,
-        #[arg(short, long = "suite", value_name = "SUITES", value_delimiter = ',')]
+        #[arg(short, long = "suite", value_name = "SUITES")]
         suites: Option<NonEmptySet<String>>,
         #[arg(short, long, default_value_t = default_jobs())]
         jobs: usize,
@@ -159,4 +159,11 @@ fn default_config() -> PathBuf {
             PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
         })
         .join("btp/toolchain.toml")
+}
+
+#[test]
+fn suite_list() {
+    let cli = Cli::try_parse_from(["btp", "test", "sqlite", "func", "-s", "a,b,c"]).unwrap();
+    let Command::Test { suites: Some(s), .. } = cli.command else { panic!("expected test with suites") };
+    assert_eq!(s.iter().map(String::as_str).collect::<Vec<_>>(), ["a", "b", "c"]);
 }

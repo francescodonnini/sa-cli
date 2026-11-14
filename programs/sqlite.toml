@@ -14,10 +14,10 @@ copy_source = false
 steps = [
     ["{src}/configure", "CC={cc}", "CFLAGS=-O2", "--enable-rtree"],
     ["make", "-j{jobs}", "CFLAGS=-O2 {copt}", "LDFLAGS.configure={ldopt}",
-        "testfixture", "speedtest1", "kvtest", "wordcount"],
+        "testfixture", "speedtest1", "kvtest", "wordcount", "fuzzcheck", "threadtest3"],
 ]
 install = { "speedtest1" = "speedtest1", "kvtest" = "kvtest", "wordcount" = "wordcount" }
-verify = ["speedtest1", "kvtest", "wordcount", "testfixture"]
+verify = ["speedtest1", "kvtest", "wordcount", "testfixture", "fuzzcheck", "threadtest3"]
 
 [test]
 # testrunner.tcl distribuisce gli script Tcl di test/ su più processi testfixture.
@@ -25,3 +25,18 @@ verify = ["speedtest1", "kvtest", "wordcount", "testfixture"]
 [[test.suite]]
 name = "veryquick"
 cmd = ["./testfixture", "{src}/test/testrunner.tcl", "--jobs", "{jobs}", "veryquick"]
+failures = "sqlite"
+
+[[test.suite]]
+name = "full"
+cmd = ["./testfixture", "{src}/test/testrunner.tcl", "--jobs", "{jobs}", "full"]
+failures = "sqlite"
+
+[[test.suite]]
+name = "fuzzcheck"
+cmd = ["sh", "-c", "./fuzzcheck {src}/test/fuzzdata*.db"]
+failures = "sqlite"
+
+[[test.suite]]
+name = "threadtest3"
+cmd = ["./threadtest3"]
