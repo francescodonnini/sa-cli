@@ -20,6 +20,10 @@ install = { "speedtest1" = "speedtest1", "kvtest" = "kvtest", "wordcount" = "wor
 verify = ["speedtest1", "kvtest", "wordcount", "testfixture", "fuzzcheck", "threadtest3"]
 
 [test]
+# misc7.test apre file finché non esaurisce i descrittori: con il limite alto
+# di alcune sessioni (IDE, systemd) impiega decine di minuti.
+nofile = 1024
+
 # testrunner.tcl distribuisce gli script Tcl di test/ su più processi testfixture.
 # Scrive testrunner.log e testrunner.db nella cartella corrente (la build).
 [[test.suite]]

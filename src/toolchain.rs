@@ -48,6 +48,9 @@ pub struct Toolchain {
     /// `runtime` è il percorso all'oggetto condiviso caricato nello spazio d'indirizzamento del
     /// programma protetto.
     pub runtime: PathBuf,
+    /// `interp` è il percorso assoluto dell'interprete ELF (trampolino) scritto in `PT_INTERP`
+    /// dei programmi protetti. Default: `{runtime}/ld-shadow.so`.
+    pub interp: PathBuf,
     pub targets: PathBuf,
 }
 
@@ -60,6 +63,7 @@ struct ToolchainFile {
     pub programs: Option<PathBuf>,
     pub results: Option<PathBuf>,
     pub runtime: Option<PathBuf>,
+    pub interp: Option<PathBuf>,
     pub targets: Option<PathBuf>,
 }
 
@@ -138,6 +142,17 @@ impl Toolchain {
             Some(p) => Some(r.exe(&p).context("clangxx")?),
             None => Self::from_clang(&clang),
         };
+        let runtime = r
+            .or_home(file.runtime, "runtime/build")
+            .context("runtime")?;
+        let interp = match file.interp {
+            Some(p) => r.path(&p).context("interp")?,
+            None => runtime.join("ld-shadow.so"),
+        };
+        // PT_INTERP deve essere assoluto: il kernel risolverebbe un percorso relativo
+        // rispetto alla cartella corrente di chi lancia il programma
+        let interp = std::path::absolute(&interp)
+            .with_context(|| format!("interp: cannot make {} absolute", interp.display()))?;
         Ok(Self {
             clang,
             clangxx,
@@ -149,9 +164,8 @@ impl Toolchain {
                 None => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/programs")),
             },
             results: r.or_home(file.results, "results").context("results")?,
-            runtime: r
-                .or_home(file.runtime, "runtime/build")
-                .context("runtime")?,
+            runtime,
+            interp,
             targets: r.or_home(file.targets, "targets").context("targets")?,
         })
     }
@@ -194,6 +208,7 @@ impl Toolchain {
         vec![
             format!("{rt}/stckcpy.o"),
             "-Wl,-e,relocate_stack".into(),
+            format!("-Wl,--dynamic-linker={}", self.interp.display()),
             format!("-L{rt}"),
             format!("-Wl,-rpath,{rt}"),
             "-Wl,--push-state,--no-as-needed".into(),

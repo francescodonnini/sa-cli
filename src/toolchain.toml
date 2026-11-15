@@ -4,4 +4,5 @@ clang = "~/llvm-project-release/build/bin/clang"
 runtime = "~/runtime/build"
 fun_pass = "~/shadow_stack/build/ShadowStack.so"
 targets = "~/targets"
+# interp = "~/runtime/build/ld-shadow.so"   # default: {runtime}/ld-shadow.so
 results = "~/results"

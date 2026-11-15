@@ -1,4 +1,7 @@
-use crate::common::{NonEmptySet, clone, command, expand, repo_dir, run_quiet, spawn_logged, vars};
+use crate::common::{
+    NonEmptySet, clone, command, expand, limit_open_files, repo_dir, run_quiet, spawn_logged,
+    spawn_logged_nofile, vars,
+};
 use crate::conf::BuildConf;
 use crate::parsers::Outcome;
 use crate::program::{Program, Suite, Suites};
@@ -54,6 +57,9 @@ pub fn run(
         let path = out.join("output.txt");
         Some(File::create(&path).with_context(|| format!("cannot create {}", path.display()))?)
     });
+    if let Some(n) = test.nofile {
+        tee.line(format!("nofile: {n}"));
+    }
     let mut summary =
         String::from("conf\tsuite\tstatus\tpassed\ttotal\tskipped\tfailed\tseconds\n");
     let mut failed: BTreeMap<BuildConf, BTreeSet<String>> = BTreeMap::new();
@@ -84,14 +90,24 @@ pub fn run(
                 .collect::<Result<Vec<_>>>()
                 .with_context(ctx)?;
             let mut cmd = command(&suite.cmd, &vars, &cwd, &env).with_context(ctx)?;
+            if let Some(n) = test.nofile {
+                limit_open_files(&mut cmd, n);
+            }
             if mode == RunMode::DryRun {
-                println!("# {} {build} {}\n{cmd:?}", prog.name, suite.name);
+                let limit = test
+                    .nofile
+                    .map(|n| format!("ulimit -Sn {n}; "))
+                    .unwrap_or_default();
+                println!("# {} {build} {}\n{limit}{cmd:?}", prog.name, suite.name);
                 continue;
             }
 
             let log = conf_out.join(format!("{}.log", suite.name));
             let t0 = Instant::now();
-            let exit = spawn_logged(&mut cmd, &log, mode)?;
+            let exit = match test.nofile {
+                Some(n) => spawn_logged_nofile(&mut cmd, &log, mode, n)?,
+                None => spawn_logged(&mut cmd, &log, mode)?,
+            };
             let o = outcome(suite, exit, &log)?;
             let secs = t0.elapsed().as_secs_f64();
             let result = if o.failed.is_empty() { "ok" } else { "failed" };

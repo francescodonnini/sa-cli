@@ -36,6 +36,8 @@ pub fn binary(tc: &Toolchain, conf: BuildConf, bin: &Path, min_refs: usize) -> R
     }
 
     let reloc = symbol_address(bin, ENTRY)?;
+    let interp = interpreter(bin)?;
+    let expected = tc.interp.display().to_string();
     if conf.uses_runtime() {
         let Some(reloc) = reloc else {
             bail!("{}: {ENTRY} not found", bin.display());
@@ -47,6 +49,13 @@ pub fn binary(tc: &Toolchain, conf: BuildConf, bin: &Path, min_refs: usize) -> R
                 bin.display()
             );
         }
+        if interp.as_deref() != Some(expected.as_str()) {
+            bail!(
+                "{}: interpreter is {}, expected {expected}",
+                bin.display(),
+                interp.as_deref().unwrap_or("none")
+            );
+        }
         let rt = tc.runtime.join("libruntime.so");
         if !resolves(bin, &rt)? {
             bail!(
@@ -55,13 +64,34 @@ pub fn binary(tc: &Toolchain, conf: BuildConf, bin: &Path, min_refs: usize) -> R
                 tc.runtime.display()
             );
         }
-    } else if reloc.is_some() {
-        bail!("{}: {ENTRY} present in a vanilla build", bin.display());
+    } else {
+        if reloc.is_some() {
+            bail!("{}: {ENTRY} present in a vanilla build", bin.display());
+        }
+        if interp.as_deref() == Some(expected.as_str()) {
+            bail!("{}: uses {expected} in a vanilla build", bin.display());
+        }
     }
     Ok(format!(
         "{}: {refs} references to {SHADOW_OFFSET}",
         bin.display()
     ))
+}
+
+fn interpreter(bin: &Path) -> Result<Option<String>> {
+    let out = Command::new("readelf")
+        .args(["-l", "-W"])
+        .arg(bin)
+        .env("LC_ALL", "C")
+        .output()
+        .context("cannot run readelf")?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    Ok(text.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("[Requesting program interpreter: ")?
+            .strip_suffix(']')
+            .map(str::to_string)
+    }))
 }
 
 fn shadow_offset_refs(bin: &Path) -> Result<usize> {

@@ -144,6 +144,9 @@ pub fn checks(tc: &Toolchain, builds: &NonEmptySet<BuildConf>, _quick: bool) -> 
         report.check("kernel module", shadow_device(device), |_| {
             device.display().to_string()
         });
+        report.check("runtime: interpreter", interpreter(&tc.interp), |_| {
+            tc.interp.display().to_string()
+        });
     }
     if builds.iter().any(|c| c.needs_ir_plugin()) {
         report.check("IR pass plugin", regular_file(&tc.fun_pass), |_| {
@@ -270,6 +273,61 @@ fn virtual_address_bits(cpuinfo: &str) -> Option<u32> {
     let line = cpuinfo.lines().find(|l| l.starts_with("address sizes"))?;
     let virt = line.split(',').find(|p| p.contains("virtual"))?;
     virt.split_whitespace().next()?.parse().ok()
+}
+
+/// L'interprete deve essere un ELF eseguibile autonomo: ET_DYN, senza un PT_INTERP proprio e
+/// senza rilocazioni, perché all'avvio nessuno le applicherebbe.
+fn interpreter(p: &Path) -> Result<()> {
+    regular_file(p)?;
+    let c_path = CString::new(p.as_os_str().as_bytes())
+        .with_context(|| format!("{} contains a NUL byte", p.display()))?;
+    if unsafe { libc::access(c_path.as_ptr(), libc::R_OK | libc::X_OK) } != 0 {
+        bail!(
+            "{} is not readable and executable by the current user",
+            p.display()
+        );
+    }
+    let out = Command::new("readelf")
+        .args(["-h", "-l", "-r", "-W"])
+        .arg(p)
+        .env("LC_ALL", "C")
+        .output()
+        .context("cannot run readelf")?;
+    if !out.status.success() {
+        bail!("{} is not a valid ELF file", p.display());
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let is_dyn = text
+        .lines()
+        .any(|l| l.trim_start().starts_with("Type:") && l.contains("DYN"));
+    if !is_dyn {
+        bail!("{} is not ET_DYN (link it with -static-pie)", p.display());
+    }
+    if text.contains("Requesting program interpreter") {
+        bail!(
+            "{} has its own PT_INTERP (link it with -static-pie)",
+            p.display()
+        );
+    }
+    let relocations: usize = text
+        .lines()
+        .filter(|l| l.starts_with("Relocation section"))
+        .filter_map(|l| {
+            l.split_once(" contains ")?
+                .1
+                .split_whitespace()
+                .next()?
+                .parse::<usize>()
+                .ok()
+        })
+        .sum();
+    if relocations > 0 {
+        bail!(
+            "{} has {relocations} relocations that nobody would apply",
+            p.display()
+        );
+    }
+    Ok(())
 }
 
 fn regular_file(p: &Path) -> Result<()> {

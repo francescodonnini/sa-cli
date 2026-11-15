@@ -32,13 +32,14 @@ env = { NO_INTERACTION = "1", TEST_PHP_EXECUTABLE = "sapi/cli/php" }
 failures = "php"
 
 [bench]
-unit = "s"
-better = "lower"
 [[bench.case]]
+kind = "single"
 name = "bench"
 cmd = ["{prefix}/php", "-n", "{src}/Zend/bench.php"]
-parser = "php-run-tests"
+metric = "time"
+
 [[bench.case]]
+kind = "single"
 name = "micro_bench"
 cmd = ["{prefix}/php", "-n", "{src}/Zend/micro_bench.php"]
-parser = "php-bench"
+metric = "time"

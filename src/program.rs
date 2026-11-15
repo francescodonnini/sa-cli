@@ -85,6 +85,9 @@ pub struct Build {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Test {
+    /// Limite soft di RLIMIT_NOFILE per i comandi di test.
+    /// Se assente, i test ereditano il limite di btp.
+    pub nofile: Option<u64>,
     #[serde(rename = "suite")]
     pub suites: Suites,
 }
@@ -320,6 +323,9 @@ impl Program {
             if program.build.copy_source {
                 bail!("{}: copy_source requires a git source", file.display());
             }
+        }
+        if program.test.as_ref().and_then(|t| t.nofile) == Some(0) {
+            bail!("{}: test.nofile must be greater than 0", file.display());
         }
         Ok(program)
     }

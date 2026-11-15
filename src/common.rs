@@ -6,6 +6,7 @@ use anyhow::{Context, Error, Result, anyhow, bail};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::str::FromStr;
@@ -203,9 +204,26 @@ pub(crate) fn run_logged(c: &mut Command, log: &Path, mode: RunMode) -> Result<(
     Ok(())
 }
 
+/// Come `spawn_logged`, ma il processo parte con il limite soft di RLIMIT_NOFILE pari a `nofile`.
+pub(crate) fn spawn_logged_nofile(
+    c: &mut Command,
+    log: &Path,
+    mode: RunMode,
+    nofile: u64,
+) -> Result<ExitStatus> {
+    limit_open_files(c, nofile);
+    spawn(c, log, mode, &format!("ulimit -Sn {nofile}; "))
+}
+
 pub(crate) fn spawn_logged(c: &mut Command, log: &Path, mode: RunMode) -> Result<ExitStatus> {
+    spawn(c, log, mode, "")
+}
+
+/// `prefix` è il comando di shell equivalente alle impostazioni non visibili in `c`
+/// (es. il limite applicato con pre_exec), stampato in modalità verbose.
+fn spawn(c: &mut Command, log: &Path, mode: RunMode, prefix: &str) -> Result<ExitStatus> {
     if mode == RunMode::Verbose {
-        println!("$ {c:?}");
+        println!("$ {prefix}{c:?}");
     }
     let f = File::create(log).with_context(|| format!("cannot create {}", log.display()))?;
     c.stdin(Stdio::null()).stdout(f.try_clone()?).stderr(f);
@@ -263,5 +281,28 @@ pub(crate) fn expand_home(path: &Path) -> Result<PathBuf> {
             Ok(PathBuf::from(home).join(rest))
         }
         Err(_) => Ok(PathBuf::from(path)),
+    }
+}
+
+/// Il processo lanciato da `c` parte con il limite soft di RLIMIT_NOFILE pari a `soft`
+/// (mai sopra il limite hard). btp non viene toccato.
+pub(crate) fn limit_open_files(c: &mut Command, soft: u64) {
+    // SAFETY: la closure gira nel figlio tra fork ed exec e usa solo getrlimit/setrlimit,
+    // che sono syscall async-signal-safe; last_os_error legge errno senza allocare.
+    unsafe {
+        c.pre_exec(move || {
+            let mut rl = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            rl.rlim_cur = soft.min(rl.rlim_max);
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &rl) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
     }
 }
