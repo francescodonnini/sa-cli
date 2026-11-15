@@ -1,6 +1,89 @@
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::cmp::PartialEq;
 use std::collections::BTreeSet;
+use std::time::Duration;
+
+/// Come ricavare i valori di una misura di benchmark.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum MetricParser {
+    /// Tempo di esecuzione del comando, misurato da btp: solo per i casi single (in un caso
+    /// client-server sarebbe la durata del client)
+    #[default]
+    Time,
+    /// wrk: "Requests/sec:"; errore con risposte non 2xx/3xx o errori di socket
+    Wrk,
+    /// `redis-benchmark --csv`: rps, p50 e p99 per ogni comando
+    RedisBenchmark,
+    /// pgbench: tps e latenza media; errore con transazioni fallite
+    Pgbench,
+    /// runcpu di SPEC CPU 2017: il tempo di ogni benchmark, dai CSV che runcpu indica
+    /// nell'output ("format: CSV -> ...")
+    Spec,
+}
+
+/// Verso di un valore: serve al riepilogo per calcolare l'overhead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Better {
+    Lower,
+    Higher,
+}
+
+impl Better {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Better::Lower => "lower",
+            Better::Higher => "higher",
+        }
+    }
+}
+
+/// Un valore prodotto da una misura. Una misura può produrne più d'uno (es. un valore per
+/// ogni comando di redis-benchmark).
+#[derive(Debug, Clone)]
+pub struct Sample {
+    pub metric: String,
+    pub value: f64,
+    pub unit: &'static str,
+    pub better: Better,
+}
+
+impl Sample {
+    fn new(metric: impl Into<String>, value: f64, unit: &'static str, better: Better) -> Sample {
+        Sample {
+            metric: metric.into(),
+            value,
+            unit,
+            better,
+        }
+    }
+}
+
+impl MetricParser {
+    /// Vero se i valori vengono dall'output del comando, e non dal tempo misurato da btp.
+    pub fn reads_output(self) -> bool {
+        self != MetricParser::Time
+    }
+
+    /// `raw` è l'output del comando misurato, `elapsed` la sua durata.
+    pub(crate) fn parse(self, raw: &str, elapsed: Duration) -> Result<Vec<Sample>> {
+        let clean = strip_ansi(raw);
+        let log = clean.as_str();
+        match self {
+            MetricParser::Time => Ok(vec![Sample::new(
+                "time",
+                elapsed.as_secs_f64(),
+                "s",
+                Better::Lower,
+            )]),
+            MetricParser::Wrk => wrk(log),
+            MetricParser::RedisBenchmark => redis_benchmark(log),
+            MetricParser::Pgbench => pgbench(log),
+            MetricParser::Spec => spec_times(log),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -514,6 +597,186 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+/// wrk: "Requests/sec:  12345.67". Una misura con risposte non 2xx/3xx o errori di socket non
+/// vale: il server ha risposto male o ha chiuso connessioni.
+fn wrk(log: &str) -> Result<Vec<Sample>> {
+    let mut rps = None;
+    for line in log.lines().map(str::trim) {
+        if let Some(n) = line.strip_prefix("Non-2xx or 3xx responses:") {
+            bail!("wrk: {} non-2xx/3xx responses", n.trim());
+        }
+        if line.starts_with("Socket errors:") {
+            bail!("wrk: {line}");
+        }
+        if let Some(v) = line.strip_prefix("Requests/sec:") {
+            rps = Some(v.trim().parse::<f64>().context("wrk: bad Requests/sec")?);
+        }
+    }
+    let rps = rps.context("wrk: no Requests/sec line")?;
+    Ok(vec![Sample::new("rps", rps, "req/s", Better::Higher)])
+}
+
+/// `redis-benchmark --csv`: un'intestazione e una riga per comando, tutti i campi tra virgolette:
+/// "test","rps","avg_latency_ms","min_latency_ms","p50_latency_ms","p95_latency_ms",...
+fn redis_benchmark(log: &str) -> Result<Vec<Sample>> {
+    let split = |l: &str| -> Vec<String> {
+        l.split(',')
+            .map(|f| f.trim().trim_matches('"').to_string())
+            .collect()
+    };
+    let mut lines = log.lines().filter(|l| l.starts_with('"'));
+    let header = split(lines.next().context("redis-benchmark: no CSV header")?);
+    let col = |name: &str| {
+        header
+            .iter()
+            .position(|h| h == name)
+            .with_context(|| format!("redis-benchmark: no column {name}"))
+    };
+    let (test, rps, p50, p99) = (
+        col("test")?,
+        col("rps")?,
+        col("p50_latency_ms")?,
+        col("p99_latency_ms")?,
+    );
+    let mut out = Vec::new();
+    for line in lines {
+        let f = split(line);
+        // "LRANGE_100 (first 100 elements)" -> "LRANGE_100"
+        let name = f[test].split_whitespace().next().unwrap_or_default();
+        let num = |i: usize| -> Result<f64> {
+            f.get(i)
+                .and_then(|v| v.parse().ok())
+                .with_context(|| format!("redis-benchmark: bad value in {line:?}"))
+        };
+        out.push(Sample::new(
+            format!("{name}.rps"),
+            num(rps)?,
+            "req/s",
+            Better::Higher,
+        ));
+        out.push(Sample::new(
+            format!("{name}.p50"),
+            num(p50)?,
+            "ms",
+            Better::Lower,
+        ));
+        out.push(Sample::new(
+            format!("{name}.p99"),
+            num(p99)?,
+            "ms",
+            Better::Lower,
+        ));
+    }
+    if out.is_empty() {
+        bail!("redis-benchmark: no results");
+    }
+    Ok(out)
+}
+
+/// pgbench: "latency average = 0.648 ms", "tps = 12345.678901 (without initial connection
+/// time)" e "number of failed transactions: 0 (0.000%)". Una misura con transazioni fallite
+/// (errori SQL, connessioni perse) non vale.
+fn pgbench(log: &str) -> Result<Vec<Sample>> {
+    let (mut tps, mut latency) = (None, None);
+    for l in log.lines().map(str::trim) {
+        if let Some(rest) = l.strip_prefix("number of failed transactions:") {
+            let n: u64 = rest
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(1);
+            if n != 0 {
+                bail!("pgbench: {n} failed transactions");
+            }
+        } else if let Some(rest) = l.strip_prefix("tps = ") {
+            let v = rest.split_whitespace().next().unwrap_or_default();
+            tps = Some(v.parse::<f64>().context("pgbench: bad tps")?);
+        } else if let Some(rest) = l.strip_prefix("latency average = ") {
+            let v = rest
+                .strip_suffix(" ms")
+                .context("pgbench: latency not in ms")?;
+            latency = Some(v.trim().parse::<f64>().context("pgbench: bad latency")?);
+        }
+    }
+    let tps = tps.context("pgbench: no tps line")?;
+    let mut out = vec![Sample::new("tps", tps, "tx/s", Better::Higher)];
+    if let Some(l) = latency {
+        out.push(Sample::new("latency", l, "ms", Better::Lower));
+    }
+    Ok(out)
+}
+
+/// runcpu scrive i risultati in un CSV per suite (intrate, fprate) e ne stampa il percorso:
+/// "    format: CSV -> <output_root>/result/CPU2017.003.intrate.refrate.csv". Si leggono solo
+/// quei file, non altri CSV rimasti da esecuzioni precedenti.
+fn spec_times(log: &str) -> Result<Vec<Sample>> {
+    let mut out = Vec::new();
+    let mut files = 0;
+    for l in log.lines() {
+        let Some(path) = l.trim().strip_prefix("format: CSV -> ") else {
+            continue;
+        };
+        let csv = std::fs::read_to_string(path.trim())
+            .with_context(|| format!("spec: cannot read {}", path.trim()))?;
+        out.extend(spec_csv(&csv).with_context(|| format!("spec: {}", path.trim()))?);
+        files += 1;
+    }
+    if files == 0 {
+        bail!("spec: no CSV in the runcpu output");
+    }
+    if out.is_empty() {
+        bail!("spec: no benchmark results in the CSV");
+    }
+    Ok(out)
+}
+
+/// La tabella "Selected Results Table" di un CSV di runcpu: per ogni benchmark il tempo
+/// dell'iterazione selezionata (la mediana se --iterations > 1).
+/// Colonne: Benchmark, "Base # Copies", "Est. Base Run Time", "Est. Base Rate",
+/// "Base Selected", "Base Status", ...; stato S = riuscito e validato, NR = non eseguito.
+/// Qualsiasi altro stato (RE, VE, CE, ...) rende la misura non valida.
+fn spec_csv(csv: &str) -> Result<Vec<Sample>> {
+    let mut lines = csv
+        .lines()
+        .skip_while(|l| l.trim() != "\"Selected Results Table\"")
+        .skip(1)
+        .skip_while(|l| l.trim().is_empty());
+    let header: Vec<&str> = lines
+        .next()
+        .context("no Selected Results Table")?
+        .split(',')
+        .map(|h| h.trim_matches('"'))
+        .collect();
+    let col = |name: &str| {
+        header
+            .iter()
+            .position(|h| *h == name)
+            .with_context(|| format!("no column {name}"))
+    };
+    let (time, status) = (col("Est. Base Run Time")?, col("Base Status")?);
+    let mut out = Vec::new();
+    let mut bad = Vec::new();
+    for l in lines.take_while(|l| !l.trim().is_empty()) {
+        let f: Vec<&str> = l.split(',').collect();
+        let name = f[0];
+        match f.get(status).copied() {
+            Some("NR") => continue,
+            Some("S") => {
+                let t = f
+                    .get(time)
+                    .and_then(|v| v.parse().ok())
+                    .with_context(|| format!("bad run time in {l:?}"))?;
+                out.push(Sample::new(name, t, "s", Better::Lower));
+            }
+            st => bad.push(format!("{name} ({})", st.unwrap_or("?"))),
+        }
+    }
+    if !bad.is_empty() {
+        bail!("failed: {}", bad.join(", "));
+    }
+    Ok(out)
+}
+
 fn spec(log: &str) -> Outcome {
     let mut running = BTreeSet::new();
     let mut ok = BTreeSet::new();
@@ -768,5 +1031,49 @@ Files=3, Tests=133,  1 wallclock secs
                 skipped: 1
             })
         );
+    }
+
+    #[test]
+    fn wrk_ok() {
+        let log = "Running 10s test\n  2 threads and 64 connections\nRequests/sec:  51234.50\nTransfer/sec: 41.2MB\n";
+        assert_eq!(wrk(log).unwrap()[0].value, 51234.5);
+        assert!(
+            wrk("Socket errors: connect 0, read 3, write 0, timeout 0\nRequests/sec: 1\n").is_err()
+        );
+    }
+
+    #[test]
+    fn redis_ok() {
+        let log = "\"test\",\"rps\",\"avg_latency_ms\",\"min_latency_ms\",\"p50_latency_ms\",\"p95_latency_ms\",\"p99_latency_ms\",\"max_latency_ms\"\n\"SET\",\"98231.43\",\"0.271\",\"0.080\",\"0.263\",\"0.375\",\"0.471\",\"1.231\"\n\"LRANGE_100 (first 100 elements)\",\"40000.00\",\"1.0\",\"0.5\",\"0.9\",\"1.2\",\"1.5\",\"3.0\"\n";
+        let s = redis_benchmark(log).unwrap();
+        assert_eq!(s.len(), 6);
+        assert_eq!(s[0].metric, "SET.rps");
+        assert_eq!(s[5].metric, "LRANGE_100.p99");
+    }
+
+    #[test]
+    fn spec_selected() {
+        let csv = "valid,0\n\n\"Full Results Table\"\n\nBenchmark,\"Base # Copies\",\"Est. Base Run Time\",\"Est. Base Rate\",\"Base Selected\",\"Base Status\",\"Peak # Copies\",\"Est. Peak Run Time\",\"Est. Peak Rate\",\"Peak Selected\",\"Peak Status\",Description\n508.namd_r,1,99.0,--,0,S,,,,,,\"ref iteration #1\"\n\n\"Selected Results Table\"\n\nBenchmark,\"Base # Copies\",\"Est. Base Run Time\",\"Est. Base Rate\",\"Base Selected\",\"Base Status\",\"Peak # Copies\",\"Est. Peak Run Time\",\"Est. Peak Rate\",\"Peak Selected\",\"Peak Status\",Description\n503.bwaves_r,,,,,NR,,,,,NR\n508.namd_r,1,1.473951,--,1,S,,,,,NR,\"SelectedIteration (base #1; peak NR)\"\n519.lbm_r,1,0.770007,--,1,S,,,,,NR,\"SelectedIteration (base #1; peak NR)\"\n\n\"SPECrate2017_fp_base\",--\n";
+        let s = spec_csv(csv).unwrap();
+        assert_eq!(s.len(), 2);
+        assert_eq!((s[0].metric.as_str(), s[0].value), ("508.namd_r", 1.473951));
+        let ve = csv.replace(
+            "519.lbm_r,1,0.770007,--,1,S",
+            "519.lbm_r,1,0.770007,--,1,VE",
+        );
+        assert!(spec_csv(&ve).is_err());
+    }
+
+    #[test]
+    fn pgbench_ok() {
+        let log = "transaction type: <builtin: select only>\nscaling factor: 10\nnumber of clients: 8\nnumber of transactions actually processed: 1234567\nnumber of failed transactions: 0 (0.000%)\nlatency average = 0.194 ms\ninitial connection time = 9.871 ms\ntps = 41152.233041 (without initial connection time)\n";
+        let s = pgbench(log).unwrap();
+        assert_eq!((s[0].metric.as_str(), s[0].value), ("tps", 41152.233041));
+        assert_eq!((s[1].metric.as_str(), s[1].value), ("latency", 0.194));
+        let failed = log.replace(
+            "failed transactions: 0 (0.000%)",
+            "failed transactions: 3 (0.001%)",
+        );
+        assert!(pgbench(&failed).is_err());
     }
 }

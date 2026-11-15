@@ -49,3 +49,33 @@ name = "test-size"
 cmd = ["sh", "-c", "ulimit -s unlimited; cd {src} && . ./shrc && runcpu --config=btp-{conf} --action=run --nobuild --size=test --iterations=1 --label={conf} --output_root={build} $BTP_BENCHMARKS"]
 env = { BTP_CC = "{cc}", BTP_CXX = "{cxx}", BTP_COPT = "{copt}", BTP_LDOPT = "{ldopt}", BTP_JOBS = "{jobs}", BTP_BENCHMARKS = "500.perlbench_r 502.gcc_r 505.mcf_r 520.omnetpp_r 523.xalancbmk_r 525.x264_r 531.deepsjeng_r 541.leela_r 557.xz_r 508.namd_r 510.parest_r 511.povray_r 519.lbm_r 526.blender_r 538.imagick_r 544.nab_r" }
 failures = "spec"
+
+# ---- benchmark -------------------------------------------------------------------------
+# input ref, una iterazione per esecuzione di runcpu: le ripetizioni le fa btp, così le
+# configurazioni si alternano (con --iterations=3 runcpu misurerebbe una configurazione
+# per volta). Niente riscaldamento: ogni benchmark è un processo nuovo, e un giro ref
+# completo dura ore. Valori: Est. Base Run Time di ogni benchmark, dai CSV di runcpu.
+# runcpu (perl, specinvoke e il benchmark) gira su una sola CPU, scelta con taskset.
+# env: lo stesso della build, altrimenti runcpu non riconosce i binari (--nobuild).
+[bench]
+repeat = 3
+warmup = 0
+
+[[bench.case]]
+kind = "single"
+name = "refrate"
+cmd = ["sh", "-c", "ulimit -s unlimited; cd {src} && . ./shrc && runcpu --config=btp-{conf} --action=run --nobuild --size=ref --iterations=1 --label={conf} --output_root={build} $BTP_BENCHMARKS"]
+env = { BTP_CC = "{cc}", BTP_CXX = "{cxx}", BTP_COPT = "{copt}", BTP_LDOPT = "{ldopt}", BTP_JOBS = "{jobs}", BTP_BENCHMARKS = "500.perlbench_r 502.gcc_r 505.mcf_r 520.omnetpp_r 523.xalancbmk_r 525.x264_r 531.deepsjeng_r 541.leela_r 557.xz_r 508.namd_r 510.parest_r 511.povray_r 519.lbm_r 526.blender_r 538.imagick_r 544.nab_r" }
+cpus = "1"
+metric = "spec"
+
+# Prova veloce dell'intera catena (runcpu, CSV, results.csv, riepilogo) con l'input test:
+# `btp bench spec2017 func -c smoke`. I tempi sono troppo brevi per misurare l'overhead.
+[[bench.case]]
+kind = "single"
+name = "smoke"
+repeat = 1
+cmd = ["sh", "-c", "ulimit -s unlimited; cd {src} && . ./shrc && runcpu --config=btp-{conf} --action=run --nobuild --size=test --iterations=1 --label={conf} --output_root={build} $BTP_BENCHMARKS"]
+env = { BTP_CC = "{cc}", BTP_CXX = "{cxx}", BTP_COPT = "{copt}", BTP_LDOPT = "{ldopt}", BTP_JOBS = "{jobs}", BTP_BENCHMARKS = "500.perlbench_r 502.gcc_r 505.mcf_r 520.omnetpp_r 523.xalancbmk_r 525.x264_r 531.deepsjeng_r 541.leela_r 557.xz_r 508.namd_r 510.parest_r 511.povray_r 519.lbm_r 526.blender_r 538.imagick_r 544.nab_r" }
+cpus = "1"
+metric = "spec"

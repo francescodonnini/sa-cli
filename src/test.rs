@@ -2,29 +2,16 @@ use crate::common::{NonEmptySet, clone, command, expand, repo_dir, run_quiet, sp
 use crate::conf::BuildConf;
 use crate::parsers::Outcome;
 use crate::program::{Program, Suite, Suites};
+use crate::tee::Tee;
 use crate::toolchain::Toolchain;
 use crate::{RunMode, doctor};
 use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Instant;
-
-struct Tee(Option<File>);
-
-impl Tee {
-    fn line(&mut self, s: impl AsRef<str>) {
-        let s = s.as_ref();
-        println!("{s}");
-        if let Some(f) = &mut self.0 {
-            // un errore di scrittura non deve interrompere i test: la riga è comunque a schermo
-            let _ = writeln!(f, "{s}");
-        }
-    }
-}
 
 pub fn run(
     tc: &Toolchain,
@@ -61,7 +48,7 @@ pub fn run(
     } else {
         results_dir(&tc.results, &prog.name)?
     };
-    let mut tee = Tee(if mode == RunMode::DryRun {
+    let mut tee = Tee::new(if mode == RunMode::DryRun {
         None
     } else {
         let path = out.join("output.txt");
@@ -154,7 +141,7 @@ pub fn run(
     if mode != RunMode::DryRun {
         let path = out.join("summary.tsv");
         fs::write(&path, &summary).with_context(|| format!("cannot write {}", path.display()))?;
-        compare(&failed, &mut tee);
+        tee.compare(&failed);
         tee.line(format!("\nlogs in {}", out.display()));
     }
     Ok(())
@@ -195,24 +182,6 @@ fn outcome(suite: &Suite, status: ExitStatus, log: &Path) -> Result<Outcome> {
         o.failed.push(format!("({status})"));
     }
     Ok(o)
-}
-
-fn compare(failed: &BTreeMap<BuildConf, BTreeSet<String>>, tee: &mut Tee) {
-    let Some(reference) = failed.get(&BuildConf::Vanilla) else {
-        return;
-    };
-    tee.line("\n== failing only in the configuration (vs vanilla)");
-    for (conf, names) in failed.iter().filter(|(c, _)| **c != BuildConf::Vanilla) {
-        let extra: Vec<&String> = names.difference(reference).collect();
-        if extra.is_empty() {
-            tee.line(format!("   {conf}: none"));
-            continue;
-        }
-        tee.line(format!("   {conf}: {}", extra.len()));
-        for n in extra.iter().take(30) {
-            tee.line(format!("     {n}"));
-        }
-    }
 }
 
 /// Crea una cartella in results/test/<programma>/<data-ora>/

@@ -1,3 +1,4 @@
+mod bench;
 mod build;
 mod common;
 mod conf;
@@ -5,6 +6,7 @@ mod doctor;
 mod parsers;
 mod program;
 mod report;
+mod tee;
 mod test;
 mod toolchain;
 mod verify;
@@ -59,6 +61,10 @@ enum Command {
         program: String,
         #[arg(value_name = "CONFS", value_parser = BuildListParser)]
         builds: NonEmptySet<BuildConf>,
+        #[arg(short, long = "case", value_name = "CASES")]
+        cases: Option<NonEmptySet<String>>,
+        #[arg(short, long, default_value_t = default_jobs())]
+        jobs: usize,
     },
     #[command(arg_required_else_help = true)]
     Build {
@@ -131,6 +137,12 @@ fn run(cli: Cli) -> Result<()> {
 
     let tc = Toolchain::load(&toolchain_file)?;
     match cli.command {
+        Command::Bench {
+            program,
+            builds,
+            cases,
+            jobs,
+        } => bench::run(&tc, &program, &builds, cases.as_ref(), jobs, mode),
         Command::Build {
             program,
             builds,
@@ -164,6 +176,23 @@ fn default_config() -> PathBuf {
 #[test]
 fn suite_list() {
     let cli = Cli::try_parse_from(["btp", "test", "sqlite", "func", "-s", "a,b,c"]).unwrap();
-    let Command::Test { suites: Some(s), .. } = cli.command else { panic!("expected test with suites") };
-    assert_eq!(s.iter().map(String::as_str).collect::<Vec<_>>(), ["a", "b", "c"]);
+    let Command::Test {
+        suites: Some(s), ..
+    } = cli.command
+    else {
+        panic!("expected test with suites")
+    };
+    assert_eq!(
+        s.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["a", "b", "c"]
+    );
+}
+
+#[test]
+fn case_list() {
+    let cli = Cli::try_parse_from(["btp", "bench", "redis", "vanilla,func", "-c", "a,b"]).unwrap();
+    let Command::Bench { cases: Some(c), .. } = cli.command else {
+        panic!("expected bench with cases")
+    };
+    assert_eq!(c.iter().map(String::as_str).collect::<Vec<_>>(), ["a", "b"]);
 }

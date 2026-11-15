@@ -29,3 +29,39 @@ verify = ["src/redis-server"]
 name = "runtest"
 cmd = ["./runtest", "--clients", "{jobs}", "--dump-logs"]
 failures = "redis"
+# ---- benchmark --------------------------------------------------------------------------
+# redis-server (strumentato) sulla CPU 1, redis-benchmark (non strumentato, dalla stessa
+# build) sulle CPU 2 e 3 con due thread: servono almeno 4 vCPU. Il server viene avviato e
+# fermato per ogni misura, senza persistenza (un salvataggio in background durante la
+# misura aggiungerebbe fork e scritture su disco). SIGTERM: arresto ordinato, uscita 0.
+# Comandi: stringhe, contatori, liste, insiemi, hash, insiemi ordinati. -r: chiavi casuali
+# su 100000 valori, invece di una chiave sola. Valori: rps, p50 e p99 per comando.
+[bench]
+repeat = 5
+warmup = 1
+
+# una richiesta alla volta per connessione: conta molto il costo di rete e delle syscall,
+# come per un'applicazione reale
+[[bench.case]]
+kind = "client-server"
+name = "requests"
+server = { cmd = ["{prefix}/redis-server", "--port", "6380", "--bind", "127.0.0.1",
+    "--save", "", "--appendonly", "no"], cpus = "1" }
+ready = { tcp = "127.0.0.1:6380" }
+client = { cmd = ["{prefix}/redis-benchmark", "-h", "127.0.0.1", "-p", "6380",
+    "-n", "1000000", "-c", "50", "--threads", "2", "-r", "100000",
+    "-t", "set,get,incr,lpush,lpop,sadd,hset,zadd,lrange_100", "--csv"], cpus = "2,3" }
+metric = "redis-benchmark"
+
+# pipeline di 16 comandi: il costo della rete si divide su 16 richieste e il server passa
+# quasi tutto il tempo nel proprio codice. È il caso in cui la protezione pesa di più.
+[[bench.case]]
+kind = "client-server"
+name = "pipelined"
+server = { cmd = ["{prefix}/redis-server", "--port", "6380", "--bind", "127.0.0.1",
+    "--save", "", "--appendonly", "no"], cpus = "1" }
+ready = { tcp = "127.0.0.1:6380" }
+client = { cmd = ["{prefix}/redis-benchmark", "-h", "127.0.0.1", "-p", "6380",
+    "-n", "5000000", "-c", "50", "-P", "16", "--threads", "2", "-r", "100000",
+    "-t", "set,get,incr,lpush,lpop,sadd,hset,zadd,lrange_100", "--csv"], cpus = "2,3" }
+metric = "redis-benchmark"

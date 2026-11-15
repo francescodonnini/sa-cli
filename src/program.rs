@@ -1,7 +1,7 @@
 use crate::common::{NonEmptySet, expand_home};
-use crate::parsers::FailureParser;
+use crate::parsers::{FailureParser, MetricParser};
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,7 +49,7 @@ pub struct Program {
     #[serde(default)]
     pub repos: BTreeMap<String, Repo>, // test & benchmarks
     // placeholder
-    pub bench: Option<toml::Value>,
+    pub bench: Option<Bench>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +112,192 @@ pub struct Repo {
     /// Passi di build (compilatore di sistema, senza strumentazione); li userà bench
     #[serde(default)]
     pub build: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bench {
+    /// Misure per configurazione (valore di default dei casi).
+    #[serde(default = "default_repeat")]
+    pub repeat: u32,
+    /// Esecuzioni scartate prima delle misure (valore di default dei casi).
+    #[serde(default = "default_warmup")]
+    pub warmup: u32,
+    #[serde(rename = "case")]
+    pub cases: Cases,
+}
+
+fn default_repeat() -> u32 {
+    5
+}
+
+fn default_warmup() -> u32 {
+    1
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "Vec<Case>")]
+pub(crate) struct Cases(NonEmptySet<Case>);
+
+impl TryFrom<Vec<Case>> for Cases {
+    type Error = String;
+
+    fn try_from(v: Vec<Case>) -> Result<Self, String> {
+        let mut seen = BTreeSet::new();
+        for c in &v {
+            if !seen.insert(c.name()) {
+                return Err(format!("duplicate bench case name \"{}\"", c.name()));
+            }
+        }
+        NonEmptySet::try_from(v)
+            .map(Cases)
+            .map_err(|_| "no bench cases".to_string())
+    }
+}
+
+impl Cases {
+    pub fn list(&self) -> &NonEmptySet<Case> {
+        &self.0
+    }
+}
+
+/// Un caso di benchmark: una misura, ripetuta `repeat` volte per ogni configurazione.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Case {
+    /// Un solo eseguibile, strumentato: la misura è il suo tempo o il suo output.
+    Single(Single),
+    /// Un server strumentato e un client non strumentato, che produce la misura.
+    ClientServer(ClientServer),
+}
+
+/// I nomi sono unici (vedi `Cases`): due casi sono lo stesso caso se hanno lo stesso nome.
+impl PartialEq for Case {
+    fn eq(&self, other: &Self) -> bool {
+        self.name() == other.name()
+    }
+}
+
+impl Case {
+    pub fn name(&self) -> &str {
+        match self {
+            Case::Single(c) => &c.name,
+            Case::ClientServer(c) => &c.name,
+        }
+    }
+
+    /// (warmup, repeat) del caso, con i valori di `[bench]` come default.
+    pub fn runs(&self, bench: &Bench) -> (u32, u32) {
+        let (w, r) = match self {
+            Case::Single(c) => (c.warmup, c.repeat),
+            Case::ClientServer(c) => (c.warmup, c.repeat),
+        };
+        (w.unwrap_or(bench.warmup), r.unwrap_or(bench.repeat))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Single {
+    pub name: String,
+    pub repeat: Option<u32>,
+    pub warmup: Option<u32>,
+    pub cmd: Vec<String>,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    pub cpus: Option<String>,
+    #[serde(default)]
+    pub metric: MetricParser,
+}
+
+impl Single {
+    pub fn process(&self) -> Process {
+        Process {
+            cmd: self.cmd.clone(),
+            cwd: self.cwd.clone(),
+            env: self.env.clone(),
+            cpus: self.cpus.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientServer {
+    pub name: String,
+    pub repeat: Option<u32>,
+    pub warmup: Option<u32>,
+    pub server: Process,
+    pub ready: Ready,
+    /// Segnale per fermare il server (default TERM).
+    #[serde(default)]
+    pub stop: StopSignal,
+    /// Comandi eseguiti a ogni misura, dopo `ready` e prima del client (es. `pgbench -i`).
+    #[serde(default)]
+    pub setup: Vec<Vec<String>>,
+    pub client: Process,
+    #[serde(deserialize_with = "output_metric")]
+    pub metric: MetricParser,
+}
+
+/// Un processo di un benchmark: il comando di un caso single, il server o il client.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Process {
+    pub cmd: Vec<String>,
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// Lista di CPU per `taskset -c` (es. "0-5" o "1,3").
+    pub cpus: Option<String>,
+}
+
+/// Quando il server è pronto: `{ tcp = "127.0.0.1:6380" }` oppure `{ delay = 2.0 }`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Ready {
+    Tcp(std::net::SocketAddr),
+    Delay(f64),
+}
+
+#[derive(Debug, Default, Deserialize, Clone, Copy)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum StopSignal {
+    #[default]
+    Term,
+    Int,
+    Quit,
+}
+
+impl StopSignal {
+    pub fn number(self) -> i32 {
+        match self {
+            StopSignal::Term => libc::SIGTERM,
+            StopSignal::Int => libc::SIGINT,
+            StopSignal::Quit => libc::SIGQUIT,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            StopSignal::Term => "TERM",
+            StopSignal::Int => "INT",
+            StopSignal::Quit => "QUIT",
+        }
+    }
+}
+
+/// La metrica di un caso client-server viene dall'output del client: `time` misurerebbe la
+/// durata del client, non il server. Errore al caricamento del toml.
+fn output_metric<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<MetricParser, D::Error> {
+    let m = MetricParser::deserialize(d)?;
+    if !m.reads_output() {
+        return Err(serde::de::Error::custom(
+            "metric \"time\" is only for kind = \"single\": a client-server case needs a parser of the client output",
+        ));
+    }
+    Ok(m)
 }
 
 impl Program {

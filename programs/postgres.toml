@@ -97,3 +97,56 @@ failures = "pg"
 name = "authentication"
 cmd = ["make", "-s", "-C", "src/test/authentication", "check"]
 failures = "pg"
+# ---- benchmark --------------------------------------------------------------------------
+# Ogni misura parte da un cluster nuovo: initdb (il bootstrap esegue il postgres
+# strumentato), poi il postmaster con exec, così il pid resta il suo e riceve il segnale
+# di arresto. Il cluster sta nella cartella di build, non tra i risultati. Solo TCP su
+# 127.0.0.1 (unix_socket_directories vuoto). fsync e synchronous_commit spenti: si misura
+# il codice del server, non il disco. SIGINT: fast shutdown, uscita 0.
+# Server sulle CPU 0 e 1 (un processo per connessione), pgbench sulle CPU 2 e 3: servono
+# almeno 4 vCPU. pgbench, initdb e libpq vengono dalla fase 1 della build: non strumentati.
+# setup: attesa che il server accetti connessioni (la porta si apre prima della fine
+# dell'avvio), poi le tabelle di pgbench con scala 10 (un milione di righe in
+# pgbench_accounts, circa 160 MB: stanno in shared_buffers).
+[bench]
+repeat = 5
+warmup = 1
+
+# TPC-B semplificato: tre UPDATE, una SELECT e una INSERT per transazione (WAL, lock, MVCC)
+[[bench.case]]
+kind = "client-server"
+name = "tpcb"
+server = { cmd = ["sh", "-c", """rm -rf {build}/bench-pgdata && \
+{prefix}/bin/initdb -D {build}/bench-pgdata -U btp -A trust --no-sync >/dev/null && \
+exec {prefix}/bin/postgres -D {build}/bench-pgdata -p 5433 -c listen_addresses=127.0.0.1 \
+-c unix_socket_directories= -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+-c shared_buffers=512MB -c max_connections=50"""], cpus = "0,1" }
+ready = { tcp = "127.0.0.1:5433" }
+stop = "INT"
+setup = [
+    ["sh", "-c", "for i in $(seq 300); do {prefix}/bin/pg_isready -q -h 127.0.0.1 -p 5433 && exit 0; sleep 0.1; done; exit 1"],
+    ["{prefix}/bin/pgbench", "-i", "-q", "-s", "10", "-h", "127.0.0.1", "-p", "5433", "-U", "btp", "postgres"],
+]
+client = { cmd = ["{prefix}/bin/pgbench", "-h", "127.0.0.1", "-p", "5433", "-U", "btp",
+    "-c", "8", "-j", "2", "-T", "30", "-M", "prepared", "postgres"], cpus = "2,3" }
+metric = "pgbench"
+
+# solo SELECT per chiave primaria: niente WAL né lock in scrittura, quasi tutto il tempo
+# nel parser, nell'executor e nel buffer manager del server
+[[bench.case]]
+kind = "client-server"
+name = "select-only"
+server = { cmd = ["sh", "-c", """rm -rf {build}/bench-pgdata && \
+{prefix}/bin/initdb -D {build}/bench-pgdata -U btp -A trust --no-sync >/dev/null && \
+exec {prefix}/bin/postgres -D {build}/bench-pgdata -p 5433 -c listen_addresses=127.0.0.1 \
+-c unix_socket_directories= -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+-c shared_buffers=512MB -c max_connections=50"""], cpus = "0,1" }
+ready = { tcp = "127.0.0.1:5433" }
+stop = "INT"
+setup = [
+    ["sh", "-c", "for i in $(seq 300); do {prefix}/bin/pg_isready -q -h 127.0.0.1 -p 5433 && exit 0; sleep 0.1; done; exit 1"],
+    ["{prefix}/bin/pgbench", "-i", "-q", "-s", "10", "-h", "127.0.0.1", "-p", "5433", "-U", "btp", "postgres"],
+]
+client = { cmd = ["{prefix}/bin/pgbench", "-h", "127.0.0.1", "-p", "5433", "-U", "btp",
+    "-c", "8", "-j", "2", "-T", "30", "-S", "-M", "prepared", "postgres"], cpus = "2,3" }
+metric = "pgbench"
